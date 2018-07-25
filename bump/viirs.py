@@ -2,6 +2,7 @@
 
 from __future__ import division, print_function
 
+import ftplib
 import datetime
 import numpy as np
 from osgeo import gdal
@@ -16,8 +17,15 @@ bumper = env.environment()
 
 class viirs(core.raster):
 
-    def __init__(self,infile):
-        core.raster.__init__(self,infile,'viirs')
+    def __init__(self):
+        core.raster.__init__(self,'viirs')
+        
+        return
+        
+        
+    def read(self,infile):
+        
+        out = self._copy()
 
         tree = '//HDFEOS/GRIDS/VNP_Grid_{}_2D/Data_Fields/'
         field = 'SurfReflect_{0}{1}_1'
@@ -30,8 +38,8 @@ class viirs(core.raster):
         res = ['1km','500m']
         mode = ['M','I']
 
-        band = gdal.Open(base.format(self.src,tree.format('1km'),field.format('QF',1)))
-        self.metadata = band.GetMetadata()
+        band = gdal.Open(base.format(infile,tree.format('1km'),field.format('QF',1)))
+        out.metadata = band.GetMetadata()
         cloudQA = self._extractBits(band.ReadAsArray(),2,3)
         hiresCloudQA = ndimage.zoom(cloudQA,2,order=0)
         band = None
@@ -43,10 +51,10 @@ class viirs(core.raster):
         # qa = (cloudQA>0)&(shadowQA<1)
         mask = ~(hiresCloudQA>0)&(hiresShadowQA<1)
 
-        east,west = float(self.metadata['EastBoundingCoord']), float(self.metadata['WestBoundingCoord'])
-        north,south = float(self.metadata['NorthBoundingCoord']), float(self.metadata['SouthBoundingCoord'])
+        east,west = float(out.metadata['EastBoundingCoord']), float(out.metadata['WestBoundingCoord'])
+        north,south = float(out.metadata['NorthBoundingCoord']), float(out.metadata['SouthBoundingCoord'])
 
-        self.extent = [west,south,east,north]
+        out.extent = [west,south,east,north]
 
         databands = {'mask':mask}
 
@@ -65,7 +73,7 @@ class viirs(core.raster):
 
                 data = np.ma.masked_where(data<0,data)
                 data = np.ma.masked_where(data>10000,data)
-#                data = np.ma.masked_where(mask!=1,data)
+                
                 bName = '{0}{1}'.format(mode[i],bands[i][j])
                 databands[bName] = data.astype(np.int16)
                 bandNames.append(bName)
@@ -73,30 +81,67 @@ class viirs(core.raster):
                 band = None
                 data = None
                 
-        self.bands = databands
-        self.bandNames = bandNames
+        out.bands = databands
+        out.bandNames = bandNames
         
-        self.updateMask()
+        out.updateMask()
 
         coords = {}
 
 
-        self.crs = {'init':'epsg:6974'}
-        self.proj = '+proj=sinu +R=6371007.181 +nadgrids=@null +wktext'
+        out.crs = {'init':'epsg:6974'}
+        out.proj = '+proj=sinu +R=6371007.181 +nadgrids=@null +wktext'
         
-        coords['lon'],coords['lat'] = self._geoGrid(self.extent,self.bands['I1'].shape,self.proj,wgsBounds=False)
+        coords['lon'],coords['lat'] = self._geoGrid(out.extent,out.bands['I1'].shape,out.proj,wgsBounds=False)
 
-        self.coords = coords
+        out.coords = coords
 
-        self.gt = self._getGt(north,west,500,self.proj)
-#
-#        transform = {}
-#        transform['Mtransform'] = Affine.from_gdal(*mgt)
-#        transform['Itransform'] = Affine.from_gdal(*igt)
-#        self.transform = transform
+        out.gt = self._getGt(north,west,500,out.proj)
 
-        date = '{0}{1}{2}'.format(self.metadata['RangeBeginningDate'],self.metadata['RangeBeginningTime'],' UTC')
+        date = '{0}{1}{2}'.format(out.metadata['RangeBeginningDate'],out.metadata['RangeBeginningTime'],' UTC')
 
-        self.coords['date'] = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f %Z')
+        out.coords['date'] = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f %Z')
 
-        return
+        return out
+    
+    def fetch(self,date,h,v,outdir='./'):
+        """Function to download VIIRS NRT data for specified time and tile
+
+        Args:
+            date (datetime.datetime): Datetime object specifying which date the data of interest was acquired.
+            h (int): horizontal tile grid to fetch
+            v (int): vertical tile grid to fetch
+            outdir (str, optional): out directory to dump retrieved data to
+            default = './' or current working directory
+            default = None
+    
+        Returns:
+            None
+        """
+    
+        if outdir[-1] != '/':
+            outdir = outdir+'/'
+    
+        usr,_,pswrd = bumper.acct.hosts['https://urs.earthdata.nasa.gov']
+    
+        basename = 'VNP09GA_NRT.A{0}{1:03d}.h{2:02d}v{3:02d}.001.h5'
+    
+        yr = date.year
+        dt = (date-datetime.datetime(yr,1,1)).days + 1
+    
+        url = 'nrt3.modaps.eosdis.nasa.gov'
+        directory = '/allData/5000/VNP09GA_NRT/Recent/'
+    
+        ftp = ftplib.FTP(url)
+        ftp.login(usr,pswrd)
+    
+        ftp.cwd(directory)
+    
+        filename = basename.format(yr,dt,h,v)
+        with open(outdir + filename, 'wb') as f:
+           ftp.retrbinary('RETR ' + filename, f.write)
+    
+        ftp.close()
+    
+        return outdir+filename
+        
