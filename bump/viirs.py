@@ -1,5 +1,7 @@
 # VIIRS packge
 
+from __future__ import division, print_function
+
 import datetime
 import numpy as np
 from osgeo import gdal
@@ -39,16 +41,16 @@ class viirs(core.raster):
         hiresShadowQA = ndimage.zoom(shadowQA,2,order=0)
 
         # qa = (cloudQA>0)&(shadowQA<1)
-        mask = (hiresCloudQA>0)&(hiresShadowQA<1)
+        mask = ~(hiresCloudQA>0)&(hiresShadowQA<1)
 
         east,west = float(self.metadata['EastBoundingCoord']), float(self.metadata['WestBoundingCoord'])
         north,south = float(self.metadata['NorthBoundingCoord']), float(self.metadata['SouthBoundingCoord'])
 
         self.extent = [west,south,east,north]
 
-        databands = {'QA':mask}
+        databands = {'mask':mask}
 
-        bandNames = ['QA']
+        bandNames = ['mask']
 
         for i in range(2):
             for j in range(len(bands[i])):
@@ -63,16 +65,18 @@ class viirs(core.raster):
 
                 data = np.ma.masked_where(data<0,data)
                 data = np.ma.masked_where(data>10000,data)
-                data = np.ma.masked_where(mask!=0,data)
+#                data = np.ma.masked_where(mask!=1,data)
                 bName = '{0}{1}'.format(mode[i],bands[i][j])
                 databands[bName] = data.astype(np.int16)
                 bandNames.append(bName)
 
                 band = None
                 data = None
-
+                
         self.bands = databands
         self.bandNames = bandNames
+        
+        self.updateMask()
 
         coords = {}
 
@@ -80,11 +84,11 @@ class viirs(core.raster):
         self.crs = {'init':'epsg:6974'}
         self.proj = '+proj=sinu +R=6371007.181 +nadgrids=@null +wktext'
         
-        coords['Lon'],coords['Lat'] = self._geoGrid(self.extent,self.bands['I1'].shape,self.proj,wgsBounds=False)
+        coords['lon'],coords['lat'] = self._geoGrid(self.extent,self.bands['I1'].shape,self.proj,wgsBounds=False)
 
         self.coords = coords
 
-        self.gt = self._getGt(north,west,self.proj)
+        self.gt = self._getGt(north,west,500,self.proj)
 #
 #        transform = {}
 #        transform['Mtransform'] = Affine.from_gdal(*mgt)
@@ -93,6 +97,6 @@ class viirs(core.raster):
 
         date = '{0}{1}{2}'.format(self.metadata['RangeBeginningDate'],self.metadata['RangeBeginningTime'],' UTC')
 
-        self.date = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f %Z')
+        self.coords['date'] = datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f %Z')
 
         return
