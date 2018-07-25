@@ -89,8 +89,7 @@ class grid(object):
 
 
 class raster(object):
-    def __init__(self,path,sensor):
-        self.src = path
+    def __init__(self,sensor):
         self.sensor = sensor
         self.crs = {'init':bumper.crs}
 
@@ -217,7 +216,7 @@ class raster(object):
 
 
 class collection(object):
-    def __init__(self,rasterList,gr):
+    def __init__(self,rasterList,gr,tile=False):
         bandList = rasterList[0].bandNames
         collDates = []
         
@@ -247,7 +246,10 @@ class collection(object):
                         'time': collDates}
                         )
         
-        self.data = ds.where(ds!=-9999)
+        if tile:
+            ds = ds.chunk({'x': 100, 'y': 100})
+        
+        self.data = ds.sortby('time').where(ds!=-9999)
         
         return 
     
