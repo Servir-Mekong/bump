@@ -13,8 +13,8 @@ class env(object):
                 
         ee.Initialize()
         
-        self.startDate = "2016-02-01"
-        self.endDate = "2016-09-01"
+        self.startDate = "2017-02-01"
+        self.endDate = "2017-09-01"
         self.location = ee.Geometry.Point([105.216064453125,19.041348796589016])
         
         self.metadataCloudCoverMax = 30
@@ -286,4 +286,4 @@ if __name__ == "__main__":
 								  scale=150)
 	
 	
-	#task_ordered.start() 
+	task_ordered.start() 
