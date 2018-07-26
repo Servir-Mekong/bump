@@ -2,7 +2,6 @@
 
 from __future__ import division, print_function
 
-import ftplib
 import datetime
 import numpy as np
 from osgeo import gdal
@@ -89,14 +88,14 @@ class viirs(core.raster):
         coords = {}
 
 
-        out.crs = {'init':'epsg:6974'}
+        out.nativeCRS = {'init':'epsg:6974'}
         out.proj = '+proj=sinu +R=6371007.181 +nadgrids=@null +wktext'
         
         coords['lon'],coords['lat'] = self._geoGrid(out.extent,out.bands['I1'].shape,out.proj,wgsBounds=False)
 
         out.coords = coords
 
-        out.gt = self._getGt(north,west,500,out.proj)
+        out.gt = None
 
         date = '{0}{1}{2}'.format(out.metadata['RangeBeginningDate'],out.metadata['RangeBeginningTime'],' UTC')
 
@@ -104,44 +103,3 @@ class viirs(core.raster):
 
         return out
     
-    def fetch(self,date,h,v,outdir='./'):
-        """Function to download VIIRS NRT data for specified time and tile
-
-        Args:
-            date (datetime.datetime): Datetime object specifying which date the data of interest was acquired.
-            h (int): horizontal tile grid to fetch
-            v (int): vertical tile grid to fetch
-            outdir (str, optional): out directory to dump retrieved data to
-            default = './' or current working directory
-            default = None
-    
-        Returns:
-            None
-        """
-    
-        if outdir[-1] != '/':
-            outdir = outdir+'/'
-    
-        usr,_,pswrd = bumper.acct.hosts['https://urs.earthdata.nasa.gov']
-    
-        basename = 'VNP09GA_NRT.A{0}{1:03d}.h{2:02d}v{3:02d}.001.h5'
-    
-        yr = date.year
-        dt = (date-datetime.datetime(yr,1,1)).days + 1
-    
-        url = 'nrt3.modaps.eosdis.nasa.gov'
-        directory = '/allData/5000/VNP09GA_NRT/Recent/'
-    
-        ftp = ftplib.FTP(url)
-        ftp.login(usr,pswrd)
-    
-        ftp.cwd(directory)
-    
-        filename = basename.format(yr,dt,h,v)
-        with open(outdir + filename, 'wb') as f:
-           ftp.retrbinary('RETR ' + filename, f.write)
-    
-        ftp.close()
-    
-        return outdir+filename
-        
