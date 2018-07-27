@@ -49,7 +49,7 @@ class functions():
 		landsat8 = landsat8.filterMetadata('CLOUD_COVER','less_than',self.env.metadataCloudCoverMax)
 		landsat8 = landsat8.select(self.env.sensorBandDictLandsatSR.get('L8'),self.env.bandNamesLandsat)
 		
-		print ee.Image(landsat8.first()).bandNames().getInfo()                 
+		print landsat8.size().getInfo()                 
 		
 		if landsat8.size().getInfo() > 0:
 			
@@ -78,12 +78,17 @@ class functions():
 					
 			if self.env.brdfCorrect == True:
 				landsat8 = landsat8.map(self.brdf)
-			
+
 			img = ee.Image(landsat8.first())
+			
+			#img = self.terrain(img)
+			#print img.getInfo()			
 				
 			if self.env.terrainCorrection == True:
 				print "terrain correction"
-				landsat8 = landsat8.map(self.terrain)
+				landsat8 = ee.ImageCollection(landsat8.map(self.terrain))
+			
+			img = ee.Image(landsat8.first())
 			
 			#img = self.terrain(img)
 			#print img.getInfo()
@@ -91,7 +96,7 @@ class functions():
 			#landsat8 = landsat8.map(self.addAllTasselCapIndices)
 
 
-		return landsat8
+		return img
        
 	
 	def CloudMaskSRL8(self,img):
@@ -247,74 +252,100 @@ class functions():
  	def terrain(self,img):   
 		degree2radian = 0.01745;
  
-		# Extract solar zenith and calculate incidence angle (i)
-		# Load USGS/SRTMGL1_003 DEM
-		terrain = ee.call('Terrain', ee.Image('USGS/SRTMGL1_003'));
-		# Extract slope in radians for each pixel in the image  
-		p = terrain.select(['slope']).multiply(degree2radian);
-		# Extract solar zenith angle from the image
-		z = ee.Number(img.get('SOLAR_ZENITH_ANGLE')).multiply(degree2radian);
-		# Extract solar azimuth from the image
-		az = ee.Image(ee.Number(img.get('SOLAR_AZIMUTH_ANGLE')).multiply(degree2radian));
-		# Extract aspect in radians for each pixel in the image
-		o = terrain.select(['aspect']).multiply(degree2radian);
-		cosao = (az.subtract(o)).cos()
-		# Calculate the cosine of the local solar incidence for every pixel in the image in radians 
-		cosi = img.expression('((cosp*cosz) + ((sinp*sinz)*(cosao)))', 
-		{
-		  'cosp': p.cos(),
-		  'cosz': z.cos(),
-		  'sinp': p.sin(),
-		  'sinz': z.sin(),
-		  'az' : az,
-		  'o' : o,
-		  'cosao': cosao
-		});
-
-		# Create the image to apply the linear regression.The first band
-		# is the cosi and the second band is the response variable, the reflectance (the bands).
-		# L (y) = a + b*cosi(x); a = intercept, b = slope
-
-		# Dependent: Reflectance
-		y = img.select(['red', 'nir', 'blue']);
-		# Independent: (cosi)
-		x = cosi;
-		# Intercept: a
-		a = ee.Image(1).rename(['a']);
-		# create an image collection with the three variables by concatenating them
-		reg_img = ee.Image.cat(a,x,y);
-		# specify the linear regression reducer
-		lr_reducer = ee.Reducer.linearRegression(2,3);
-
-		# fit the model
-		fit = reg_img.reduceRegion(
-				reducer= lr_reducer,
-				geometry= ee.Image(img).geometry(),
-				scale= 30,
-				maxPixels= 1e9);
+		def topoCorr_IC(img):
+			
+			dem = ee.Image("USGS/SRTMGL1_003")
+			
+			
+			# Extract image metadata about solar position
+			SZ_rad = ee.Image.constant(ee.Number(img.get('SOLAR_ZENITH_ANGLE'))) #.multiply(degree2radian).clip(img.geometry().buffer(10000)); 
+			SA_rad = ee.Image.constant(ee.Number(img.get('SOLAR_AZIMUTH_ANGLE'))).multiply(degree2radian).clip(img.geometry().buffer(10000)); 
+			
 				
-		fit = fit.combine({"coefficients": ee.Array([[1],[1]])}, False);
+			# Creat terrain layers
+			slp = ee.Terrain.slope(dem).clip(img.geometry().buffer(10000));
+			slp_rad = ee.Terrain.slope(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
+			asp_rad = ee.Terrain.aspect(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
+  
+  
+			
+			# Calculate the Illumination Condition (IC)
+			# slope part of the illumination condition
+			cosZ = SZ_rad.cos();
+			cosS = slp_rad.cos();
+			slope_illumination = cosS.expression("cosZ * cosS", \
+												{'cosZ': cosZ, 'cosS': cosS.select('slope')});
+			
+			
+			# aspect part of the illumination condition
+			sinZ = SZ_rad.sin(); 
+			sinS = slp_rad.sin();
+			cosAziDiff = (SA_rad.subtract(asp_rad)).cos();
+			aspect_illumination = sinZ.expression("sinZ * sinS * cosAziDiff", \
+                                           {'sinZ': sinZ, \
+                                            'sinS': sinS, \
+                                            'cosAziDiff': cosAziDiff});
+			
+			# full illumination condition (IC)
+			ic = slope_illumination.add(aspect_illumination);
+			
+			
 
-		# Get the coefficients as a nested list, 
-		# cast it to an array, and get just the selected column
-		slo = (ee.Array(fit.get('coefficients')).get([1,0]));
-		intercept = (ee.Array(fit.get('coefficients')).get([0,0]));
-
-		# Calculate C parameter C= a/b
-		C = intercept.divide(slo);
-
-		image = img.expression(
-					'((img * ((cosp*cosz) + C))/(cosi + C))',
-					{
-					  'img': img,
-					  'cosp': p.cos(),
-					  'cosz': z.cos(),
-					  'cosi': cosi,
-					  'C': C
-				  });
-
-		return img.select([]).addBands(image).copyProperties(img)
+			# Add IC to original image
+			img_plus_ic = ee.Image(img.addBands(ic.rename(['IC'])).addBands(cosZ.rename(['cosZ'])).addBands(cosS.rename(['cosS'])).addBands(slp.rename(['slope'])));
+			
+			return ee.Image(img_plus_ic);
  
+		def topoCorr_SCSc(img):
+			img_plus_ic = img;
+			mask1 = img_plus_ic.select('nir').gt(-0.1);
+			mask2 = img_plus_ic.select('slope').gte(5) \
+                            .And(img_plus_ic.select('IC').gte(0)) \
+                            .And(img_plus_ic.select('nir').gt(-0.1));
+
+			img_plus_ic_mask2 = ee.Image(img_plus_ic.updateMask(mask2));
+
+			bandList = ee.List(['blue', 'green', 'red', 'nir', 'swir1', 'swir2']); # Specify Bands to topographically correct
+    
+			def apply_SCSccorr(band):
+				method = 'SCSc';
+			
+				out = img_plus_ic_mask2.select('IC', band).reduceRegion(reducer= ee.Reducer.linearFit(), \
+																			geometry= ee.Geometry(img.geometry().buffer(-5000)), \
+																			scale= 30, \
+																			maxPixels = 1e13); 
+
+				out_a = ee.Number(out.get('scale'));
+				out_b = ee.Number(out.get('offset'));
+				out_c = ee.Number(out.get('offset')).divide(ee.Number(out.get('scale')));
+				
+				# apply the SCSc correction
+				SCSc_output = img_plus_ic_mask2.expression("((image * (cosB * cosZ + cvalue)) / (ic + cvalue))", {
+															'image': img_plus_ic_mask2.select([band]),
+															'ic': img_plus_ic_mask2.select('IC'),
+															'cosB': img_plus_ic_mask2.select('cosS'),
+															'cosZ': img_plus_ic_mask2.select('cosZ'),
+															'cvalue': out_c });
+      
+				return ee.Image(SCSc_output);
+			
+				
+			# need to fix this in to map.. 
+			img_SCSccorr = img.select([]).addBands(apply_SCSccorr("blue")).addBands(apply_SCSccorr("red")) \
+																		  .addBands(apply_SCSccorr("green"))\
+																		  .addBands(apply_SCSccorr("nir")) \
+																		  .addBands(apply_SCSccorr("swir1"))\
+																		  .addBands(apply_SCSccorr("swir2"))\
+																		  
+			return img_SCSccorr.unmask(img_plus_ic.select(bandList)) 
+	
+		
+		
+		img = topoCorr_IC(img)
+		img = topoCorr_SCSc(img)
+		
+		return img
+  	
  
 	def brdf(self,img):   
 		
@@ -348,6 +379,7 @@ class functions():
 			"""Calculate kvol kernel.
 			From Lucht et al. 2000
 			Phase angle = cos(solar zenith) cos(view zenith) + sin(solar zenith) sin(view zenith) cos(relative azimuth)"""
+			
 			relative_azimuth = sunAz.subtract(viewAz).rename(['relAz'])
 			pa1 = viewZen.cos() \
 				.multiply(sunZen.cos())
@@ -394,19 +426,21 @@ if __name__ == "__main__":
 	
 	landsatImages = functions().getLandsat()
 	
-	print landsatImages.size().getInfo()
+	print landsatImages.getInfo()
 	
-	img = ee.Image(landsatImages.first())
-	geom = ee.Image(landsatImages.first()).geometry().getInfo()
 	
-	print img.bandNames().getInfo()
+	img = ee.Image(landsatImages) #.first())
+	geom = ee.Image(img).geometry().getInfo()
+	
+	#print img.bandNames().getInfo()
 	
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
-								  assetId="users/servirmekong/temp/tempwwater22" ,
+								  assetId="users/servirmekong/temp/tempwwater27" ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
-								  scale=100)
+								  scale=30)
 	
 	
 	task_ordered.start() 
+	
