@@ -84,6 +84,8 @@ class grid(object):
             
         out.coords['Lon'],out.coords['Lat'] = self.xx,self.yy
         out.extent = bumper.west,bumper.south,bumper.east,bumper.north
+        
+        out.gt = out._getGt(bumper.north,bumper.west,self.nominalResolution)
 
         return out
 
@@ -155,16 +157,25 @@ class raster(object):
 
         return lons,lats
     
-    def _getGt(self,north,west,pxSize,projStr=None):
+    def _getGt(self,north,west,gridSize,projStr=None):
         if projStr:
             outProj = Proj(projStr)
             inProj = Proj(init=bumper.crs)
 
-        ulx,uly = transform(inProj,outProj,west,north)
+            ulx,uly = transform(inProj,outProj,west,north)
+            
+        else:
+            ulx,uly = bumper.west,bumper.north
+            
+        if type(gridSize) == list:
+            pxSize = gridSize[0]
+            pySize = gridSize[1]
+        else:
+            pxSize,pySize = gridSize, gridSize
 
         #(originX, pixelWidth, 0, originY, 0, pixelHeight)
 
-        gt = (ulx,pxSize,0,uly,0,-pxSize)
+        gt = (ulx,pxSize,0,uly,0,-pySize)
 
         return gt
     
