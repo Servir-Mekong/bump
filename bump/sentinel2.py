@@ -61,6 +61,7 @@ class env(object):
         self.cloudMask = True
         self.hazeMask = True
         self.shadowMask = True
+        self.terrainCorrection = True
 
 
 class functions():       
@@ -85,8 +86,12 @@ class functions():
 		
 		s2s = s2s.map(self.addAllTasselCapIndices)
 		s2s = s2s.map(self.tcbwi)
+		s2s = s2s.map(self.terrain)
+		
+		img = ee.Image(s2s.first())
+		
 				
-		return s2s
+		return img
 		
 
 	def scaleS2(self,img):
@@ -260,27 +265,126 @@ class functions():
 		
 		return img.addBands(out).addBands(out);
 
+ 	def terrain(self,img):   
+		degree2radian = 0.01745;
+ 
+		def topoCorr_IC(img):
+			
+			dem = ee.Image("USGS/SRTMGL1_003")
+						
+			# Extract image metadata about solar position
+			SZ_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_ZENITH_ANGLE'))).multiply(3.14159265359).divide(180).clip(img.geometry().buffer(10000)); 
+			SA_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')).multiply(3.14159265359).divide(180)).clip(img.geometry().buffer(10000)); 
+			
+			# Creat terrain layers
+			slp = ee.Terrain.slope(dem).clip(img.geometry().buffer(10000));
+			slp_rad = ee.Terrain.slope(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
+			asp_rad = ee.Terrain.aspect(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
+  			
+			# Calculate the Illumination Condition (IC)
+			# slope part of the illumination condition
+			cosZ = SZ_rad.cos();
+			cosS = slp_rad.cos();
+			slope_illumination = cosS.expression("cosZ * cosS", \
+												{'cosZ': cosZ, 'cosS': cosS.select('slope')});
+	
+			# aspect part of the illumination condition
+			sinZ = SZ_rad.sin(); 
+			sinS = slp_rad.sin();
+			cosAziDiff = (SA_rad.subtract(asp_rad)).cos();
+			aspect_illumination = sinZ.expression("sinZ * sinS * cosAziDiff", \
+                                           {'sinZ': sinZ, \
+                                            'sinS': sinS, \
+                                            'cosAziDiff': cosAziDiff});
+	
+			# full illumination condition (IC)
+			ic = slope_illumination.add(aspect_illumination);
+			
+			# Add IC to original image
+			img_plus_ic = ee.Image(img.addBands(ic.rename(['IC'])).addBands(cosZ.rename(['cosZ'])).addBands(cosS.rename(['cosS'])).addBands(slp.rename(['slope'])));
+			
+			return ee.Image(img_plus_ic);
+ 
+		def topoCorr_SCSc(img):
+			img_plus_ic = img;
+			mask1 = img_plus_ic.select('nir').gt(-0.1);
+			mask2 = img_plus_ic.select('slope').gte(5) \
+                            .And(img_plus_ic.select('IC').gte(0)) \
+                            .And(img_plus_ic.select('nir').gt(-0.1));
+
+			img_plus_ic_mask2 = ee.Image(img_plus_ic.updateMask(mask2));
+
+			bandList = ee.List(['cb','blue','green','red']) #,'re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2']); # Specify Bands to topographically correct
+    
+			def apply_SCSccorr(band):
+				method = 'SCSc';
+			
+				out = img_plus_ic_mask2.select('IC', band).reduceRegion(reducer= ee.Reducer.linearFit(), \
+																			geometry= img.geometry().buffer(-5000), \
+																			scale= 10, \
+																			maxPixels = 1e13); 
+
+				out_a = ee.Number(out.get('scale'));
+				out_b = ee.Number(out.get('offset'));
+				out_c = ee.Number(out.get('offset')).divide(ee.Number(out.get('scale')));
+				
+				# apply the SCSc correction
+				SCSc_output = img_plus_ic_mask2.expression("((image * (cosB * cosZ + cvalue)) / (ic + cvalue))", {
+															'image': img_plus_ic_mask2.select([band]),
+															'ic': img_plus_ic_mask2.select('IC'),
+															'cosB': img_plus_ic_mask2.select('cosS'),
+															'cosZ': img_plus_ic_mask2.select('cosZ'),
+															'cvalue': out_c });
+      
+				return ee.Image(SCSc_output);
+			
+				
+			# need to fix this in to map.. 
+			img_SCSccorr = img.select([]).addBands(apply_SCSccorr("cb")) \
+										 .addBands(apply_SCSccorr("blue")) \
+										 .addBands(apply_SCSccorr("green")) \
+										 .addBands(apply_SCSccorr("red"))\
+								#		 .addBands(apply_SCSccorr("re1")) \
+								#		 .addBands(apply_SCSccorr("re2"))\
+								#		 .addBands(apply_SCSccorr("re3"))\
+								#		 .addBands(apply_SCSccorr("nir"))\
+								#		 .addBands(apply_SCSccorr("nir2"))\
+								#		 .addBands(apply_SCSccorr("waterVapor"))\
+								#		 .addBands(apply_SCSccorr("cirrus"))\
+								#		 .addBands(apply_SCSccorr("swir1"))\
+								#		 .addBands(apply_SCSccorr("swir2"))\
+	
+	
+			return img_SCSccorr.unmask(img_plus_ic.select(bandList)) 
+	
+		
+		
+		img = topoCorr_IC(img)
+		img = topoCorr_SCSc(img)
+		
+		return img
+
      		
 if __name__ == "__main__":        
 	
-	s2Images = functions().getSentinel2().sort("CLOUD_COVERAGE_ASSESSMENT")
+	img = functions().getSentinel2()
 	
-	print ee.Image(s2Images.first()).bandNames().getInfo()
+	#print s2Images.bandNames().getInfo()
 
-	img = ee.Image(s2Images.first()).select(["tcbwi"])
-	print img.getInfo()
+	#img = ee.Image(s2Images.first()) #.select(["tcbwi"])
+	#print img.getInfo()
 	geom = ee.Image(img).geometry().getInfo()
 
-	img = img.mask(img.gt(0))
+	#img = img.mask(img.gt(0))
 	# create the vizualization parameters
-	viz = {'min':-1, 'max':1, 'bands':"tcbwi",'palette':"red,green,blue"};
+	#viz = {'min':-1, 'max':1, 'bands':"tcbwi",'palette':"red,green,blue"};
  
-	ee.mapclient.centerMap(105.216064453125,19.0413,10)
-	ee.mapclient.addToMap(img,viz, "mymap")
+	#ee.mapclient.centerMap(105.216064453125,19.0413,10)
+	#ee.mapclient.addToMap(img,viz, "mymap")
 	
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
-								  assetId="users/servirmekong/temp/0waters208" ,
+								  assetId="users/servirmekong/temp/0waters209" ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
 								  scale=150)
