@@ -79,23 +79,13 @@ class functions():
 			if self.env.brdfCorrect == True:
 				landsat8 = landsat8.map(self.brdf)
 
-			img = ee.Image(landsat8.first())
-			
-			#img = self.terrain(img)
-			#print img.getInfo()			
-				
+						
 			if self.env.terrainCorrection == True:
 				print "terrain correction"
 				landsat8 = ee.ImageCollection(landsat8.map(self.terrain))
 			
 			img = ee.Image(landsat8.first())
-			
-			#img = self.terrain(img)
-			#print img.getInfo()
-			#
-			#landsat8 = landsat8.map(self.addAllTasselCapIndices)
-
-
+				
 		return img
        
 	
@@ -194,61 +184,6 @@ class functions():
 		return collection_tdom
 
 
-	def addAllTasselCapIndices(self,img): 
-		""" Function to get all tasselCap indices """
-		
-		def getTasseledCap(img):
-			"""Function to compute the Tasseled Cap transformation and return an image"""
-			
-			coefficients = ee.Array([
-				[0.3037, 0.2793, 0.4743, 0.5585, 0.5082, 0.1863],
-				[-0.2848, -0.2435, -0.5436, 0.7243, 0.0840, -0.1800],
-				[0.1509, 0.1973, 0.3279, 0.3406, -0.7112, -0.4572],
-				[-0.8242, 0.0849, 0.4392, -0.0580, 0.2012, -0.2768],
-				[-0.3280, 0.0549, 0.1075, 0.1855, -0.4357, 0.8085],
-				[0.1084, -0.9022, 0.4120, 0.0573, -0.0251, 0.0238]
-			]);
-		
-			bands=ee.List(['blue','green','red','nir','swir1','swir2'])
-			
-			# Make an Array Image, with a 1-D Array per pixel.
-			arrayImage1D = img.select(bands).toArray()
-		
-			# Make an Array Image with a 2-D Array per pixel, 6x1.
-			arrayImage2D = arrayImage1D.toArray(1)
-		
-			componentsImage = ee.Image(coefficients).matrixMultiply(arrayImage2D).arrayProject([0]).arrayFlatten([['brightness', 'greenness', 'wetness', 'fourth', 'fifth', 'sixth']]).float();
-	  
-			# Get a multi-band image with TC-named bands.
-			return img.addBands(componentsImage);	
-			
-			
-		def addTCAngles(img):
-
-			""" Function to add Tasseled Cap angles and distances to an image. Assumes image has bands: 'brightness', 'greenness', and 'wetness'."""
-				
-			# Select brightness, greenness, and wetness bands	
-			brightness = img.select('brightness');
-			greenness = img.select('greenness');
-			wetness = img.select('wetness');
-	  
-			# Calculate Tasseled Cap angles and distances
-			tcAngleBG = brightness.atan2(greenness).divide(math.pi).rename(['tcAngleBG']);
-			tcAngleGW = greenness.atan2(wetness).divide(math.pi).rename(['tcAngleGW']);
-			tcAngleBW = brightness.atan2(wetness).divide(math.pi).rename(['tcAngleBW']);
-			tcDistBG = brightness.hypot(greenness).rename(['tcDistBG']);
-			tcDistGW = greenness.hypot(wetness).rename(['tcDistGW']);
-			tcDistBW = brightness.hypot(wetness).rename(['tcDistBW']);
-			img = img.addBands(tcAngleBG).addBands(tcAngleGW).addBands(tcAngleBW).addBands(tcDistBG).addBands(tcDistGW).addBands(tcDistBW);
-			
-			return img;
-	
-	
-		img = getTasseledCap(img)
-		img = addTCAngles(img)
-		return img
-
- 
  	def terrain(self,img):   
 		degree2radian = 0.01745;
  
@@ -436,7 +371,7 @@ if __name__ == "__main__":
 	
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
-								  assetId="users/servirmekong/temp/tempwwater27" ,
+								  assetId="users/servirmekong/temp/tempwwater28" ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
 								  scale=30)
