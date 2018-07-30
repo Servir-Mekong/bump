@@ -2,8 +2,11 @@
 
 from __future__ import division, print_function
 
+import os
 import ee
 import netrc
+
+fd = os.path.dirname(os.path.realpath(__file__))
 
 class environment(object):
 
@@ -12,7 +15,7 @@ class environment(object):
         # Initialize the Earth Engine object, using the authentication credentials.
         ee.Initialize()
         
-        self.acct = netrc.netrc('../mycredentials.netrc')
+        self.acct = netrc.netrc(fd + '/../mycredentials.netrc')
         
         self.crs = 'epsg:4326'
         

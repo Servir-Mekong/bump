@@ -2,12 +2,14 @@
 
 from __future__ import division, print_function
 
-import glob
+#import glob
 import copy
 import math
+from itertools import groupby
 
 import numpy as np
 import xarray as xr
+from osgeo import gdal,osr
 from pyproj import Proj, transform
 from scipy import interpolate 
 
@@ -62,6 +64,8 @@ class grid(object):
         pts[:,1] = rasterLats[idx].ravel()
         
         bNames = raster.bands.keys()
+        
+        qualityBands = np.zeros([self.dims[0],self.dims[1],len(bNames)])
                 
         out = raster._copy()
         
@@ -72,14 +76,17 @@ class grid(object):
                 iMethod = interpMethod
             
             # Regrid data to common grid 
-            out.bands[bNames[i]] = interpolate.griddata(pts, raster.bands[bNames[i]][idx].ravel(),
-                                           (self.xx,self.yy), method=iMethod)
+            out.bands[bNames[i]] = interpolate.griddata(pts, 
+                                     raster.bands[bNames[i]][idx].ravel(),
+                                     (self.xx,self.yy), method=iMethod)
             
+            qualityBands[:,:,i] = (out.bands[bNames[i]] < 16000) & \
+                                  (out.bands[bNames[i]] > -1)
             if i == 0:
                 interpMask = np.isnan(out.bands[bNames[i]])
-            
                 
-        out.bands['mask'] = out.bands['mask'] & ~interpMask
+        qualityMask = np.min(qualityBands,axis=2).astype(np.bool)
+        out.bands['mask'] = out.bands['mask'] & ~interpMask & qualityMask
         out.updateMask()
             
         out.coords['Lon'],out.coords['Lat'] = self.xx,self.yy
@@ -122,6 +129,7 @@ class raster(object):
         out = bits >> start
 
         return out
+    
 
     def _geoGrid(self,extent,dims,nativeProj=None,wgsBounds=True):
 
@@ -157,6 +165,7 @@ class raster(object):
 
         return lons,lats
     
+    
     def _getGt(self,north,west,gridSize,projStr=None):
         if projStr:
             outProj = Proj(projStr)
@@ -179,6 +188,7 @@ class raster(object):
 
         return gt
     
+    
     def updateMask(self):
         bNames = [i for i in self.bands.keys() if i != 'mask']
         mask = self.bands['mask']
@@ -188,6 +198,7 @@ class raster(object):
             self.bands[i] = np.ma.masked_where(mask==0,data)
             
         return
+    
     
     def unmask(self,value=None):
         bNames = [i for i in self.bands.keys() if i != 'mask']
@@ -205,12 +216,15 @@ class raster(object):
                 
         return out
     
+    
     def writeGeotiff(self,fileName):
         
             return
         
+        
     def normalizedDifference(self,band1,band2):
-        nd = (self.bands[band1] - self.bands[band2]) / (self.bands[band1] + self.bands[band2])
+        nd = (self.bands[band1] - self.bands[band2]) / \
+             (self.bands[band1] + self.bands[band2])
         
         self.bands['nd'] = nd
         
@@ -228,8 +242,27 @@ class raster(object):
 
 class collection(object):
     def __init__(self,rasterList,gr,tile=False):
+        gt = rasterList[0].gt
+        sensor =rasterList[0].sensor
         bandList = rasterList[0].bandNames
         collDates = []
+        for i in rasterList:
+            collDates.append([i,i.coords['date']])
+        
+        outArr = []
+        outDates = []
+        masks = []
+        for k,g in groupby(collDates,lambda x: x[1]):
+            this = list(g)
+            outDates.append(this[0][1])
+            newList = []
+            ms = []
+            for i in this:
+                newList.append(i[0].bands.values())
+                ms.append(i[0].bands['mask'])
+                
+            outArr.append(np.mean(newList,axis=0))
+            masks.append(np.min(ms))
         
         x = gr.xx[0,:]
         y = gr.yy[:,0]
@@ -237,35 +270,75 @@ class collection(object):
         data = {'x':x,'y':y}
         
         for i in range(len(bandList)):
-            tData = np.zeros([gr.dims[0],gr.dims[1],len(rasterList)])
-            for j in range(len(rasterList)):
+            tData = np.zeros([gr.dims[0],gr.dims[1],len(outArr)])
+            for j in range(len(outArr)):
                 if rasterList[j].bandNames != bandList:
-                    raise AttributeError('All band names for rasters must be the same for collection')
+                    raise AttributeError('All band names for rasters must be \
+                                         the same for collection')
                         
                 else:
-                    if i == 0:
-                        collDates.append(rasterList[j].coords['date'])
-                    temp = rasterList[j].unmask(-9999)
-                    tData[:,:,j] = np.flipud(temp.bands[bandList[i]])
+                    temp = outArr[j][i,:,:]
+                    temp[np.where(masks[j]==0)] = 0
+                    if sensor == 'viirs':
+                        tData[:,:,j] = np.flipud(temp)
+                    else:
+                        tData[:,:,j] = temp
                     
                 data[bandList[i]] = (['y','x','time'],tData)
         
             
         ds = xr.Dataset(data,
-                coords={'lon': (['y', 'x'], gr.xx),
-                        'lat': (['y', 'x'], gr.yy),
-                        'time': collDates}
+                        coords={'lon': (['y', 'x'], gr.xx),
+                                'lat': (['y', 'x'], gr.yy),
+                                'time': outDates},
+                        attrs={'gt':gt,}
                         )
         
         if tile:
             ds = ds.chunk({'x': 100, 'y': 100})
         
-        self.data = ds.sortby('time').where(ds!=-9999)
+        self.data = ds.sortby('time').where(ds!=0)
         
         return 
     
     def writeNetCDF(self,fileName):   
         
-
-
+        return
+    
+    def writeGeotiffs(self,folder,prefix='bump_out'):
+        
+        nFiles,y,x = self.data.dims.values()
+        dates = self.data.time.values
+        
+        drv = gdal.GetDriverByName('GTiff')
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(int(bumper.crs.split(':')[1]))
+                
+        
+        for i in range(nFiles):
+            t = str(dates[i]).split('.')[0].replace(':','')
+            print(t)
+            tValues = self.data.isel(time=i).to_array().values
+            
+            bands = tValues.shape[0]
+            
+            outDs = drv.Create(prefix + '_' + t + '.tif',
+                               y,
+                               x,
+                               bands,
+                               gdal.GDT_Int16
+                               )
+            
+            for b in range(bands):
+                band = outDs.GetRasterBand(b+1)
+                band.WriteArray(tValues[b,:,:])
+                band.SetNoDataValue(0)
+                band = None
+            
+            outDs.SetGeoTransform(self.data.attrs['gt'])
+            
+            outDs.SetProjection(srs.ExportToWkt())
+            
+            outDs.FlushCache()
+        
         return
