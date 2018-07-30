@@ -198,3 +198,59 @@ class indices():
 		img = img.addBands(ibi.rename(['IBI']));
 		
 		return img
+
+	def addTopography(self,img):
+		"""  Function to add 30m SRTM elevation and derived slope, aspect, eastness, and 
+		northness to an image. Elevation is in meters, slope is between 0 and 90 deg,
+		aspect is between 0 and 359 deg. Eastness and northness are unitless and are
+		between -1 and 1. """
+
+		# Import SRTM elevation data
+		elevation = ee.Image("USGS/SRTMGL1_003");
+		
+		# Calculate slope, aspect, and hillshade
+		topo = ee.Algorithms.Terrain(elevation);
+		
+		# From aspect (a), calculate eastness (sin a), northness (cos a)
+		deg2rad = ee.Number(math.pi).divide(180);
+		aspect = topo.select(['aspect']);
+		aspect_rad = aspect.multiply(deg2rad);
+		eastness = aspect_rad.sin().rename(['eastness']).float();
+		northness = aspect_rad.cos().rename(['northness']).float();
+		
+		# Add topography bands to image
+		topo = topo.select(['elevation','slope','aspect']).addBands(eastness).addBands(northness);
+		img = img.addBands(topo);
+		return img;
+
+	def addJRC(self,img):
+		""" Function to add JRC Water layers: 'occurrence', 'change_abs', 
+			'change_norm', 'seasonality','transition', 'max_extent' """
+		
+		jrcImage = ee.Image("JRC/GSW1_0/GlobalSurfaceWater")
+		
+		img = img.addBands(jrcImage.select(['occurrence']).rename(['occurrence']))
+		img = img.addBands(jrcImage.select(['change_abs']).rename(['change_abs']))
+		img = img.addBands(jrcImage.select(['change_norm']).rename(['change_norm']))
+		img = img.addBands(jrcImage.select(['seasonality']).rename(['seasonality']))
+		img = img.addBands(jrcImage.select(['transition']).rename(['transition']))
+		img = img.addBands(jrcImage.select(['max_extent']).rename(['max_extent']))
+		
+		return img
+		
+	def addNightLights(self,img,y):
+		""" Function to add nighlights to the composite' """
+		
+		startDate = ee.Date.fromYMD(y, 1, 1)
+		endDate = ee.Date.fromYMD(y, 12, 31)
+		
+		if y < 2012:
+		
+			nightLights = ee.Image(ee.ImageCollection("NOAA/DMSP-OLS/NIGHTTIME_LIGHTS").filterDate(startDate,endDate).mean())	
+			img = img.addBands(nightLights.select(["stable_lights"]).rename(["stable_lights"]))
+		
+		if y >= 2012:
+			nightLights = ee.Image(ee.ImageCollection("NOAA/VIIRS/DNB/MONTHLY_V1/VCMCFG").filterDate(startDate,endDate).mean())	
+			img = img.addBands(nightLights.select(["avg_rad"]).rename(["stable_lights"]))
+		
+		return img
