@@ -1,8 +1,15 @@
 # Sentinel-2 package
 
 import ee
-import math 
-import ee.mapclient
+from Py6S import *
+import math
+import datetime
+import os, sys
+sys.path.append(os.path.join("../../gee-atmcorr-S2/",'bin'))
+from atmospheric import Atmospheric
+
+ 
+#import ee.mapclient
 
 class env(object):
 
@@ -15,9 +22,9 @@ class env(object):
         
         self.startDate = "2017-02-01"
         self.endDate = "2017-09-01"
-        self.location = ee.Geometry.Point([105.216064453125,19.041348796589016])
+        self.location = ee.Geometry.Point([-80.72,-1.34])
         
-        self.metadataCloudCoverMax = 30
+        self.metadataCloudCoverMax = 80
         self.cloudThreshold = 10
         self.hazeThresh = 200
         
@@ -26,7 +33,9 @@ class env(object):
         self.divideBands = ee.List(['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2'])
       
         
-         # 9. Cloud and cloud shadow masking parameters.
+        self.feature = 0
+        
+        # 9. Cloud and cloud shadow masking parameters.
         # If cloudScoreTDOM is chosen
         # cloudScoreThresh: If using the cloudScoreTDOMShift method-Threshold for cloud 
         #    masking (lower number masks more clouds.  Between 10 and 30 generally works best)
@@ -55,7 +64,8 @@ class env(object):
         # that are often missed (1.5 results in a 1 pixel buffer)(0.5 results in a 0 pixel buffer)
         # (2.5 or 3.5 generally is sufficient)
         self.dilatePixels = 3.5;
-
+        
+        self.calcSR = True
               
         self.maskSR = True
         self.cloudMask = True
@@ -64,11 +74,14 @@ class env(object):
         self.terrainCorrection = True
 
 
-class surfaceReflectance():
+class functions():       
 	def __init__(self):
-		self.env = environment()
-    
-	def TAOtoSR(self,img):
+		"""Initialize the Surfrace Reflectance app."""  
+ 
+	    # get the environment
+		self.env = env() 
+	
+	def TOAtoSR(self,img):
 		
 		cloudMask = img.select(['cloudScore'])
 		info = self.collectionMeta[self.env.feature]['properties']
@@ -76,6 +89,7 @@ class surfaceReflectance():
 		solar_z = info['MEAN_SOLAR_ZENITH_ANGLE']
         
 		geom = ee.Geometry.Point([info['centroid']['coordinates'][0],info['centroid']['coordinates'][1]])
+		print geom
 		date = ee.Date.fromYMD(scene_date.year,scene_date.month,scene_date.day)
 		
 		h2o = Atmospheric.water(geom,date).getInfo()
@@ -109,20 +123,20 @@ class surfaceReflectance():
 			"""
             
 			bandSelect = {
-				'B1':PredefinedWavelengths.S2A_MSI_01,
-				'B2':PredefinedWavelengths.S2A_MSI_02,
-				'B3':PredefinedWavelengths.S2A_MSI_03,
-				'B4':PredefinedWavelengths.S2A_MSI_04,
-				'B5':PredefinedWavelengths.S2A_MSI_05,
-				'B6':PredefinedWavelengths.S2A_MSI_06,
-				'B7':PredefinedWavelengths.S2A_MSI_07,
-				'B8':PredefinedWavelengths.S2A_MSI_08,
-				'B8A':PredefinedWavelengths.S2A_MSI_09,
-				'B9':PredefinedWavelengths.S2A_MSI_10,
-				'B10':PredefinedWavelengths.S2A_MSI_11,
-				'B11':PredefinedWavelengths.S2A_MSI_12,
-				'B12':PredefinedWavelengths.S2A_MSI_13}
-                
+				'cb':PredefinedWavelengths.S2A_MSI_01,
+				'blue':PredefinedWavelengths.S2A_MSI_02,
+				'green':PredefinedWavelengths.S2A_MSI_03,
+				'red':PredefinedWavelengths.S2A_MSI_04,
+				're1':PredefinedWavelengths.S2A_MSI_05,
+				're2':PredefinedWavelengths.S2A_MSI_06,
+				're3':PredefinedWavelengths.S2A_MSI_07,
+				'nir':PredefinedWavelengths.S2A_MSI_08,
+				'nir2':PredefinedWavelengths.S2A_MSI_09,
+				'waterVapor':PredefinedWavelengths.S2A_MSI_10,
+				'cirrus':PredefinedWavelengths.S2A_MSI_11,
+				'swir1':PredefinedWavelengths.S2A_MSI_12,
+				'swir2':PredefinedWavelengths.S2A_MSI_13}
+								    
 			return Wavelength(bandSelect[bandname])
 
 		def toa_to_rad(bandname):
@@ -172,7 +186,8 @@ class surfaceReflectance():
 		
 		# all wavebands
 		output = img.select('QA60')
-		for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
+		#for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
+		for band in ['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2']:
 			output = output.addBands(surface_reflectance(band))
 			
 		self.env.feature += 1
@@ -180,13 +195,6 @@ class surfaceReflectance():
 		return output.addBands(cloudMask)
 
 
-class functions():       
-	def __init__(self):
-		"""Initialize the Surfrace Reflectance app."""  
- 
-	    # get the environment
-		self.env = env() 
-		
 	def getSentinel2(self):
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
                                                  .filterBounds(self.env.location) \
@@ -194,6 +202,11 @@ class functions():
 												 .select(self.env.s2BandsIn,self.env.s2BandsOut)
 		
 		s2s = s2s.map(self.scaleS2)
+		
+		if self.env.calcSR == True:
+			self.collectionMeta = s2s.getInfo()['features']
+			s2s = s2s.map(self.TOAtoSR)	
+		
 		s2s = s2s.map(self.QAMaskCloud)
 		s2s = s2s.map(self.sentinelCloudScore)
 			
@@ -485,18 +498,9 @@ if __name__ == "__main__":
 	
 	img = functions().getSentinel2()
 	
-	#print s2Images.bandNames().getInfo()
-
-	#img = ee.Image(s2Images.first()) #.select(["tcbwi"])
-	#print img.getInfo()
+	
 	geom = ee.Image(img).geometry().getInfo()
 
-	#img = img.mask(img.gt(0))
-	# create the vizualization parameters
-	#viz = {'min':-1, 'max':1, 'bands':"tcbwi",'palette':"red,green,blue"};
- 
-	#ee.mapclient.centerMap(105.216064453125,19.0413,10)
-	#ee.mapclient.addToMap(img,viz, "mymap")
 	
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
