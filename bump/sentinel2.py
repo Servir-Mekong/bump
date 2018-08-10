@@ -64,6 +64,122 @@ class env(object):
         self.terrainCorrection = True
 
 
+class surfaceReflectance():
+	def __init__(self):
+		self.env = environment()
+    
+	def TAOtoSR(self,img):
+		
+		cloudMask = img.select(['cloudScore'])
+		info = self.collectionMeta[self.env.feature]['properties']
+		scene_date = datetime.datetime.utcfromtimestamp(info['system:time_start']/1000)# i.e. Python uses seconds, EE uses milliseconds
+		solar_z = info['MEAN_SOLAR_ZENITH_ANGLE']
+        
+		geom = ee.Geometry.Point([info['centroid']['coordinates'][0],info['centroid']['coordinates'][1]])
+		date = ee.Date.fromYMD(scene_date.year,scene_date.month,scene_date.day)
+		
+		h2o = Atmospheric.water(geom,date).getInfo()
+		o3 = Atmospheric.ozone(geom,date).getInfo()
+		aot = Atmospheric.aerosol(geom,date).getInfo()
+
+		SRTM = ee.Image('CGIAR/SRTM90_V4')# Shuttle Radar Topography mission covers *most* of the Earth
+		alt = SRTM.reduceRegion(reducer = ee.Reducer.mean(),geometry = geom).get('elevation').getInfo()
+		km = alt/1000 # i.e. Py6S uses units of kilometers
+		
+		# Instantiate
+		s = SixS()
+		
+		# Atmospheric constituents
+		s.atmos_profile = AtmosProfile.UserWaterAndOzone(h2o,o3)
+		s.aero_profile = AeroProfile.Continental
+		s.aot550 = aot
+		
+		# Earth-Sun-satellite geometry
+		s.geometry = Geometry.User()
+		s.geometry.view_z = 0               # always NADIR (I think..)
+		s.geometry.solar_z = solar_z        # solar zenith angle
+		s.geometry.month = scene_date.month # month and day used for Earth-Sun distance
+		s.geometry.day = scene_date.day     # month and day used for Earth-Sun distance
+		s.altitudes.set_sensor_satellite_level()
+		s.altitudes.set_target_custom_altitude(km)
+		
+		def spectralResponseFunction(bandname):
+			"""
+			Extract spectral response function for given band name
+			"""
+            
+			bandSelect = {
+				'B1':PredefinedWavelengths.S2A_MSI_01,
+				'B2':PredefinedWavelengths.S2A_MSI_02,
+				'B3':PredefinedWavelengths.S2A_MSI_03,
+				'B4':PredefinedWavelengths.S2A_MSI_04,
+				'B5':PredefinedWavelengths.S2A_MSI_05,
+				'B6':PredefinedWavelengths.S2A_MSI_06,
+				'B7':PredefinedWavelengths.S2A_MSI_07,
+				'B8':PredefinedWavelengths.S2A_MSI_08,
+				'B8A':PredefinedWavelengths.S2A_MSI_09,
+				'B9':PredefinedWavelengths.S2A_MSI_10,
+				'B10':PredefinedWavelengths.S2A_MSI_11,
+				'B11':PredefinedWavelengths.S2A_MSI_12,
+				'B12':PredefinedWavelengths.S2A_MSI_13}
+                
+			return Wavelength(bandSelect[bandname])
+
+		def toa_to_rad(bandname):
+			"""
+			Converts top of atmosphere reflectance to at-sensor radiance
+			"""
+			
+			# solar exoatmospheric spectral irradiance
+			ESUN = info['SOLAR_IRRADIANCE_'+bandname]
+			solar_angle_correction = math.cos(math.radians(solar_z))
+			
+			# Earth-Sun distance (from day of year)
+			doy = scene_date.timetuple().tm_yday
+			d = 1 - 0.01672 * math.cos(0.9856 * (doy-4))# http://physics.stackexchange.com/questions/177949/earth-sun-distance-on-a-given-day-of-the-year
+			
+			# conversion factor
+			multiplier = ESUN*solar_angle_correction/(math.pi*d**2)
+			
+			# at-sensor radiance
+			rad = img.select(bandname).multiply(multiplier)
+			return rad
+			
+		
+		def surface_reflectance(bandname):
+			"""
+			Calculate surface reflectance from at-sensor radiance given waveband name
+			"""
+			
+			# run 6S for this waveband
+			s.wavelength = spectralResponseFunction(bandname)
+			s.run()
+			
+			# extract 6S outputs
+			Edir = s.outputs.direct_solar_irradiance             #direct solar irradiance
+			Edif = s.outputs.diffuse_solar_irradiance            #diffuse solar irradiance
+			Lp   = s.outputs.atmospheric_intrinsic_radiance      #path radiance
+			absorb  = s.outputs.trans['global_gas'].upward       #absorption transmissivity
+			scatter = s.outputs.trans['total_scattering'].upward #scattering transmissivity
+			tau2 = absorb*scatter                                #total transmissivity
+			
+			# radiance to surface reflectance
+			rad = toa_to_rad(bandname)
+			
+			ref = rad.subtract(Lp).multiply(math.pi).divide(tau2*(Edir+Edif))
+			
+			return ref
+		
+		# all wavebands
+		output = img.select('QA60')
+		for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
+			output = output.addBands(surface_reflectance(band))
+			
+		self.env.feature += 1
+		
+		return output.addBands(cloudMask)
+
+
 class functions():       
 	def __init__(self):
 		"""Initialize the Surfrace Reflectance app."""  
