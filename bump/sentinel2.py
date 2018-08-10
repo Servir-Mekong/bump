@@ -5,7 +5,7 @@ from Py6S import *
 import math
 import datetime
 import os, sys
-sys.path.append(os.path.join("../../gee-atmcorr-S2/",'bin'))
+sys.path.append("/gee-atmcorr-S2/bin/")
 from atmospheric import Atmospheric
 
  
@@ -83,13 +83,12 @@ class functions():
 	
 	def TOAtoSR(self,img):
 		
-		cloudMask = img.select(['cloudScore'])
+		#cloudMask = img.select(['cloudScore'])
 		info = self.collectionMeta[self.env.feature]['properties']
 		scene_date = datetime.datetime.utcfromtimestamp(info['system:time_start']/1000)# i.e. Python uses seconds, EE uses milliseconds
 		solar_z = info['MEAN_SOLAR_ZENITH_ANGLE']
         
 		geom = ee.Geometry.Point([info['centroid']['coordinates'][0],info['centroid']['coordinates'][1]])
-		print geom
 		date = ee.Date.fromYMD(scene_date.year,scene_date.month,scene_date.day)
 		
 		h2o = Atmospheric.water(geom,date).getInfo()
@@ -123,19 +122,19 @@ class functions():
 			"""
             
 			bandSelect = {
-				'cb':PredefinedWavelengths.S2A_MSI_01,
-				'blue':PredefinedWavelengths.S2A_MSI_02,
-				'green':PredefinedWavelengths.S2A_MSI_03,
-				'red':PredefinedWavelengths.S2A_MSI_04,
-				're1':PredefinedWavelengths.S2A_MSI_05,
-				're2':PredefinedWavelengths.S2A_MSI_06,
-				're3':PredefinedWavelengths.S2A_MSI_07,
-				'nir':PredefinedWavelengths.S2A_MSI_08,
-				'nir2':PredefinedWavelengths.S2A_MSI_09,
-				'waterVapor':PredefinedWavelengths.S2A_MSI_10,
-				'cirrus':PredefinedWavelengths.S2A_MSI_11,
-				'swir1':PredefinedWavelengths.S2A_MSI_12,
-				'swir2':PredefinedWavelengths.S2A_MSI_13}
+				'B1':PredefinedWavelengths.S2A_MSI_01,
+				'B2':PredefinedWavelengths.S2A_MSI_02,
+				'B3':PredefinedWavelengths.S2A_MSI_03,
+				'B4':PredefinedWavelengths.S2A_MSI_04,
+				'B5':PredefinedWavelengths.S2A_MSI_05,
+				'B6':PredefinedWavelengths.S2A_MSI_06,
+				'B7':PredefinedWavelengths.S2A_MSI_07,
+				'B8':PredefinedWavelengths.S2A_MSI_08,
+				'B8A':PredefinedWavelengths.S2A_MSI_09,
+				'B9':PredefinedWavelengths.S2A_MSI_10,
+				'B10':PredefinedWavelengths.S2A_MSI_11,
+				'B11':PredefinedWavelengths.S2A_MSI_12,
+				'B12':PredefinedWavelengths.S2A_MSI_13}
 								    
 			return Wavelength(bandSelect[bandname])
 
@@ -186,27 +185,28 @@ class functions():
 		
 		# all wavebands
 		output = img.select('QA60')
-		#for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
-		for band in ['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2']:
+		for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
 			output = output.addBands(surface_reflectance(band))
 			
 		self.env.feature += 1
 		
-		return output.addBands(cloudMask)
+		return output #.addBands(cloudMask)
 
 
 	def getSentinel2(self):
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
                                                  .filterBounds(self.env.location) \
 												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
-												 .select(self.env.s2BandsIn,self.env.s2BandsOut)
+						#						 .select(self.env.s2BandsIn,self.env.s2BandsOut)
 		
 		s2s = s2s.map(self.scaleS2)
 		
 		if self.env.calcSR == True:
 			self.collectionMeta = s2s.getInfo()['features']
-			s2s = s2s.map(self.TOAtoSR)	
+			print(self.collectionMeta)
+			s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
 		
+
 		s2s = s2s.map(self.QAMaskCloud)
 		s2s = s2s.map(self.sentinelCloudScore)
 			
@@ -224,9 +224,12 @@ class functions():
 		
 
 	def scaleS2(self,img):
-		t = img.select(self.env.divideBands).divide(10000);
+		t = img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']).divide(10000);
 		t = t.addBands(img.select(['QA60']));
-		return t.copyProperties(img).copyProperties(img,['system:time_start']).set("centroid",img.geometry().centroid())
+		out = t.copyProperties(img).copyProperties(img,['system:time_start']).set("centroid",img.geometry().centroid())
+
+		return out;
+
 		
 
 	# Function to mask clouds using the Sentinel-2 QA band.
@@ -394,7 +397,7 @@ class functions():
 		
 		return img.addBands(out).addBands(out);
 
- 	def terrain(self,img):   
+	def terrain(self,img):
 		degree2radian = 0.01745;
  
 		def topoCorr_IC(img):
@@ -504,7 +507,7 @@ if __name__ == "__main__":
 	
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
-								  assetId="users/servirmekong/temp/0waters209" ,
+								  assetId="users/servirmekong/temp/032waters209" ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
 								  scale=150)
