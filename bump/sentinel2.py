@@ -26,8 +26,8 @@ class env(object):
         countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
         self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
  
-        self.metadataCloudCoverMax = 20
-        self.cloudThreshold = 5
+        self.metadataCloudCoverMax = 80
+        self.cloudThreshold = 10
         self.hazeThresh = 200
         
         self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
@@ -205,7 +205,7 @@ class functions():
 						 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .select(self.env.s2BandsIn,self.env.s2BandsOut)
 
-#		s2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
+#		2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
@@ -230,7 +230,7 @@ class functions():
 		
 		#s2s = s2s.map(self.addAllTasselCapIndices)
 		#s2s = s2s.map(self.tcbwi)
-		#s2s = s2s.map(self.terrain)
+		s2s = s2s.map(self.terrain)
 		
 		img = ee.Image(s2s.median())
 		print(img.getInfo())
@@ -517,7 +517,7 @@ class functions():
      		
 if __name__ == "__main__":        
 	
-	img = functions().getSentinel2().select(["red","green","blue","cloudScore","cloudMask","TDOMMask"]).multiply(10000)
+	img = functions().getSentinel2().select(["red","green","blue"]) #,"cloudScore","cloudMask","TDOMMask"]).multiply(10000)
 	#img = functions().getSentinel2().select(["TDOMMask"])	
 	print(img.bandNames().getInfo())	
 	
