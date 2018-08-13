@@ -20,16 +20,18 @@ class env(object):
                 
         ee.Initialize()
         
-        self.startDate = "2017-02-01"
-        self.endDate = "2017-09-01"
+        self.startDate = "2017-01-01"
+        self.endDate = "2017-12-31"
         self.location = ee.Geometry.Point([-80.72,-1.34])
-        
-        self.metadataCloudCoverMax = 80
-        self.cloudThreshold = 10
+        countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
+        self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
+ 
+        self.metadataCloudCoverMax = 20
+        self.cloudThreshold = 5
         self.hazeThresh = 200
         
-        self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])
-        self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2'])
+        self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
+        self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2','TDOMMask'])
         self.divideBands = ee.List(['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2'])
       
         
@@ -39,31 +41,31 @@ class env(object):
         # If cloudScoreTDOM is chosen
         # cloudScoreThresh: If using the cloudScoreTDOMShift method-Threshold for cloud 
         #    masking (lower number masks more clouds.  Between 10 and 30 generally works best)
-        self.cloudScoreThresh = 0.3;
+        self.cloudScoreThresh = 10;
 
         # Percentile of cloud score to pull from time series to represent a minimum for 
         # the cloud score over time for a given pixel. Reduces commission errors over 
         # cool bright surfaces. Generally between 5 and 10 works well. 0 generally is a bit noisy
-        self.cloudScorePctl = 0; 
+        self.cloudScorePctl = 10; 
 
         # zScoreThresh: Threshold for cloud shadow masking- lower number masks out 
         # less. Between -0.8 and -1.2 generally works well
-        self.zScoreThresh = -0.8;
+        self.zScoreThresh = -1.15
 
         # shadowSumThresh: Sum of IR bands to include as shadows within TDOM and the 
         # shadow shift method (lower number masks out less)
-        self.shadowSumThresh = 0.30;
+        self.shadowSumThresh = 3000;
 
         # contractPixels: The radius of the number of pixels to contract (negative buffer) clouds and cloud shadows by. Intended to eliminate smaller cloud 
         #    patches that are likely errors (1.5 results in a -1 pixel buffer)(0.5 results in a -0 pixel buffer)
         # (1.5 or 2.5 generally is sufficient)
-        self.contractPixels = 1.5; 
+        self.contractPixels = 2.5; 
 
         # dilatePixels: The radius of the number of pixels to dilate (buffer) clouds 
         # and cloud shadows by. Intended to include edges of clouds/cloud shadows 
         # that are often missed (1.5 results in a 1 pixel buffer)(0.5 results in a 0 pixel buffer)
         # (2.5 or 3.5 generally is sufficient)
-        self.dilatePixels = 3.5;
+        self.dilatePixels = 2.5;
         
         self.calcSR = True
               
@@ -83,7 +85,7 @@ class functions():
 	
 	def TOAtoSR(self,img):
 		
-		#cloudMask = img.select(['cloudScore'])
+		TDOMMask = img.select(['TDOMMask'])
 		info = self.collectionMeta[self.env.feature]['properties']
 		scene_date = datetime.datetime.utcfromtimestamp(info['system:time_start']/1000)# i.e. Python uses seconds, EE uses milliseconds
 		solar_z = info['MEAN_SOLAR_ZENITH_ANGLE']
@@ -97,8 +99,12 @@ class functions():
 
 		SRTM = ee.Image('CGIAR/SRTM90_V4')# Shuttle Radar Topography mission covers *most* of the Earth
 		alt = SRTM.reduceRegion(reducer = ee.Reducer.mean(),geometry = geom).get('elevation').getInfo()
-		km = alt/1000 # i.e. Py6S uses units of kilometers
 		
+		if alt:
+			km = alt/1000 # i.e. Py6S uses units of kilometers
+		
+		else:
+			km = 0
 		# Instantiate
 		s = SixS()
 		
@@ -190,42 +196,52 @@ class functions():
 			
 		self.env.feature += 1
 		
-		return output #.addBands(cloudMask)
+		return output.addBands(TDOMMask)
 
 
 	def getSentinel2(self):
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
                                                  .filterBounds(self.env.location) \
-												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
-						#						 .select(self.env.s2BandsIn,self.env.s2BandsOut)
-		
-		s2s = s2s.map(self.scaleS2)
-		
-		if self.env.calcSR == True:
-			self.collectionMeta = s2s.getInfo()['features']
-			print(self.collectionMeta)
-			s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
-		
+						 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+#						 .select(self.env.s2BandsIn,self.env.s2BandsOut)
+
+#		s2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
+		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
+                                                 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+#						 .map(self.QAMaskCloud)
+
+		print(s2sAll.size().getInfo())
+		s2s = self.maskShadows(s2s,s2sAll)
+		#print(s2s.first().bandNames().getInfo())
+
+		s2s = s2s.map(self.scaleS2)#.select(self.env.s2BandsIn,self.env.s2BandsOut)
+		self.collectionMeta = s2s.getInfo()['features']
+		#print(self.collectionMeta)
+		s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
+		#print(s2s.first().bandNames().getInfo())
 
 		s2s = s2s.map(self.QAMaskCloud)
 		s2s = s2s.map(self.sentinelCloudScore)
-			
+		#print(s2s.first().bandNames().getInfo())
+	
 		s2s = self.cloudMasking(s2s)
-		s2s = self.maskShadows(s2s)
+		#print(s2s.first().bandNames().getInfo())
+
 		
-		s2s = s2s.map(self.addAllTasselCapIndices)
-		s2s = s2s.map(self.tcbwi)
-		s2s = s2s.map(self.terrain)
+		#s2s = s2s.map(self.addAllTasselCapIndices)
+		#s2s = s2s.map(self.tcbwi)
+		#s2s = s2s.map(self.terrain)
 		
-		img = ee.Image(s2s.first())
-		
+		img = ee.Image(s2s.median())
+		print(img.getInfo())
 				
 		return img
 		
 
 	def scaleS2(self,img):
-		t = img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']).divide(10000);
-		t = t.addBands(img.select(['QA60']));
+		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
+		t = t.divide(10000)
+		t = t.addBands(img.select(['QA60',"TDOMMask"]));
 		out = t.copyProperties(img).copyProperties(img,['system:time_start']).set("centroid",img.geometry().centroid())
 
 		return out;
@@ -266,45 +282,47 @@ class functions():
         
 		# cloud until proven otherwise
 		score = ee.Image(1)
+		blueCirrusScore = ee.Image(0)
 		
 		# clouds are reasonably bright
-		score = score.min(rescale(img.select(['blue']), [0.1, 0.5]))
-		score = score.min(rescale(img.select(['cb']), [0.1, 0.3]))
-		score = score.min(rescale(img.select(['cb']).add(img.select(['cirrus'])), [0.15, 0.2]))
+		blueCirrusScore = blueCirrusScore.max(rescale(img.select(['blue']), [0.1, 0.5]))
+		blueCirrusScore = blueCirrusScore.max(rescale(img.select(['cb']), [0.1, 0.5]))
+		blueCirrusScore = blueCirrusScore.max(rescale(img.select(['cirrus']), [0.1, 0.3]))
+		score = score.min(blueCirrusScore)
+		
 		score = score.min(rescale(img.select(['red']).add(img.select(['green'])).add(img.select('blue')), [0.2, 0.8]))
-		
+		score = score.min(rescale(img.select(['nir']).add(img.select(['swir1'])).add(img.select('swir2')), [0.3, 0.8]))
+
 		# clouds are moist
-		ndmi = img.normalizedDifference(['re3','swir1'])
-		score=score.min(rescale(ndmi, [-0.1, 0.1]))
+		ndsi = img.normalizedDifference(['green','swir1'])
+		score=score.min(rescale(ndsi, [0.8, 0.6]))
+		score = score.multiply(100).byte();
+		score = score.clamp(0,100);
 		
-		# clouds are not snow.
-		ndsi = img.normalizedDifference(['green', 'swir1'])
-		score=score.min(rescale(ndsi, [0.8, 0.6])).rename(['cloudScore'])
-		
-		return img.addBands(score)         
+		return img.addBands(score.rename(['cloudScore']))         
 	
 	
 	def cloudMasking(self,collection):
 
 		
 		def maskClouds(img):
-			cloudMask = img.select(['cloudScore']).subtract(minCloudScore) \
+			cloudMask = img.select(['cloudScore']).lt(self.env.cloudScoreThresh)\
 											      .focal_min(self.env.dilatePixels) \
 											      .focal_max(self.env.contractPixels) \
-											      .lt(self.env.cloudScoreThresh).rename(['cloudMask'])    
+											      .rename(['cloudMask'])    
             
 			return img.updateMask(cloudMask).addBands(cloudMask);
 
 		
 		# Find low cloud score pctl for each pixel to avoid comission errors
-		minCloudScore = collection.select(['cloudScore']).reduce(ee.Reducer.percentile([self.env.cloudScorePctl]));
+		#minCloudScore = collection.select(['cloudScore']).reduce(ee.Reducer.percentile([self.env.cloudScorePctl]));
 
 		collection = collection.map(maskClouds)
 		
 		return collection
 		
 
-	def maskShadows(self,collection):
+	def maskShadows(self,collection,allCollection):
 
 		def TDOM(image):
 			zScore = image.select(shadowSumBands).subtract(irMean).divide(irStdDev)
@@ -318,11 +336,11 @@ class functions():
 			outimg = image.updateMask(image.select(['TDOMMask']))
 			return outimg
 
-		shadowSumBands = ['nir','swir1']
+		shadowSumBands = ['B8','B11']
 
 		# Get some pixel-wise stats for the time series
-		irStdDev = collection.select(shadowSumBands).reduce(ee.Reducer.stdDev())
-		irMean = collection.select(shadowSumBands).reduce(ee.Reducer.mean())
+		irStdDev = allCollection.select(shadowSumBands).reduce(ee.Reducer.stdDev())
+		irMean = allCollection.select(shadowSumBands).reduce(ee.Reducer.mean())
 
 		# Mask out dark dark outliers
 		collection_tdom = collection.map(TDOM)
@@ -499,18 +517,22 @@ class functions():
      		
 if __name__ == "__main__":        
 	
-	img = functions().getSentinel2()
-	
+	img = functions().getSentinel2().select(["red","green","blue","cloudScore","cloudMask","TDOMMask"]).multiply(10000)
+	#img = functions().getSentinel2().select(["TDOMMask"])	
+	print(img.bandNames().getInfo())	
 	
 	geom = ee.Image(img).geometry().getInfo()
+	countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw');
+	geom  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry().bounds().getInfo();
 
-	
+	import time
+	t= time.strftime("%Y%m%d_%H%M%S")
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
 								  description="tempwater", 
-								  assetId="users/servirmekong/temp/032waters209" ,
+								  assetId="users/servirmekong/temp/077ters209"+t ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
-								  scale=150)
+								  scale=20)
 	
 	
 	task_ordered.start() 
