@@ -493,13 +493,29 @@ class functions():
 
 			bandList = ee.List(['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2']); # Specify Bands to topographically correct
     
+			def applyBands(image):
+				cb = apply_SCSccorr('cb').select(['cb'])
+				blue = apply_SCSccorr('blue').select(['blue'])
+				green = apply_SCSccorr('green').select(['green'])
+				red = apply_SCSccorr('red').select(['red'])
+				re1 = apply_SCSccorr('re1').select(['re1'])
+				re2 = apply_SCSccorr('re2').select(['re2'])
+				re3 = apply_SCSccorr('re3').select(['re3'])
+				nir = apply_SCSccorr('nir').select(['nir'])
+				nir2 = apply_SCSccorr('nir2').select(['nir2'])
+				waterVapor = apply_SCSccorr('waterVapor').select(['waterVapor'])
+				cirrus = apply_SCSccorr('cirrus').select(['cirrus'])
+				swir1 = apply_SCSccorr('swir1').select(['swir1'])
+				swir2 = apply_SCSccorr('swir2').select(['swir2'])
+				return replace_bands(image, [cb,blue, green, red,re1,re2,re3, nir,nir2,waterVapor,cirrus, swir1, swir2])
+
 			def apply_SCSccorr(band):
 				method = 'SCSc';
-			
+		
 				out = img_plus_ic_mask2.select('IC', band).reduceRegion(reducer= ee.Reducer.linearFit(), \
-																			geometry= ee.Geometry(img.geometry().buffer(-5000)), \
-																			scale= 30, \
-																			maxPixels = 1e13); 
+																		geometry= ee.Geometry(img.geometry().buffer(-5000)), \
+																		scale= 30, \
+																		maxPixels = 1e13); 
 
 				out_a = ee.Number(out.get('scale'));
 				out_b = ee.Number(out.get('offset'));
@@ -514,15 +530,14 @@ class functions():
 															'cvalue': out_c });
       
 				return ee.Image(SCSc_output);
+																  
+			#img_SCSccorr = ee.Image([apply_SCSccorr(band) for band in bandList]).addBands(img_plus_ic.select('IC'));
+			img_SCSccorr = applyBands(img).select(bandList).addBands(img_plus_ic.select('IC'))
+		
+			bandList_IC = ee.List([bandList, 'IC']).flatten();
 			
-				
-			# need to fix this in to map.. 
-			img_SCSccorr = img.select([]).addBands(apply_SCSccorr("blue")).addBands(apply_SCSccorr("red")) \
-																		  .addBands(apply_SCSccorr("green"))\
-																		  .addBands(apply_SCSccorr("nir")) \
-																		  .addBands(apply_SCSccorr("swir1"))\
-																		  .addBands(apply_SCSccorr("swir2"))\
-																		  
+			img_SCSccorr = img_SCSccorr.unmask(img_plus_ic.select(bandList_IC)).select(bandList);
+  			
 			return img_SCSccorr.unmask(img_plus_ic.select(bandList)) 
 	
 		
@@ -532,6 +547,28 @@ class functions():
 		
 		return img
   	
+
+	def medoidMosaic(self,collection):
+		""" medoid composite with equal weight among indices """
+                    
+		collection = collection.select(self.env.divideBands)
+
+		bandNames = self.env.divideBands;
+		bandNumbers = ee.List.sequence(1,bandNames.length());
+        
+		# calculate medion
+		median = ee.ImageCollection(collection).median()
+        
+		def subtractmedian(img):
+			diff = ee.Image(img).subtract(median).pow(ee.Image.constant(2));
+			return diff.reduce('sum').addBands(img);
+        
+		medoid = collection.map(subtractmedian)
+  
+		medoid = ee.ImageCollection(medoid).reduce(ee.Reducer.min(bandNames.length().add(1))).select(bandNumbers,bandNames);
+  
+		return medoid;
+
  
 	def brdf(self,img):   
 		
