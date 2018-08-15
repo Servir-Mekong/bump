@@ -13,69 +13,64 @@ from atmospheric import Atmospheric
 
 class env(object):
 
-    def __init__(self):
+	def __init__(self):
         """Initialize the environment."""   
          
-        # Initialize the Earth Engine object, using the authentication credentials.
-                
-        ee.Initialize()
+		# Initialize the Earth Engine object, using the authentication credentials.
+		ee.Initialize()
+		self.startDate = "2016-01-13"
+		self.endDate = "2016-01-26"
+		self.location = ee.Geometry.Point([-80.72,-1.34])
+		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
+		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
+		
+		self.metadataCloudCoverMax = 80
+		self.cloudThreshold = 10
+		self.hazeThresh = 200
+		self.exportBands = ee.List(['blue','green','red'])
         
-        self.startDate = "2016-01-13"
-        self.endDate = "2016-01-26"
-        self.location = ee.Geometry.Point([-80.72,-1.34])
-        countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
-        self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
- 
-        self.metadataCloudCoverMax = 80
-        self.cloudThreshold = 10
-        self.hazeThresh = 200
-        
-        self.exportBands = ee.List(['blue','green','red'])
-        
-        self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])
-        self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2'])
-        self.divideBands = ee.List(['cb','blue','green','red','re1','re2','re3','nir','nir2','waterVapor','cirrus','swir1','swir2'])
-      
-        
-        self.feature = 0
-        
-        # 9. Cloud and cloud shadow masking parameters.
-        # If cloudScoreTDOM is chosen
-        # cloudScoreThresh: If using the cloudScoreTDOMShift method-Threshold for cloud 
-        #    masking (lower number masks more clouds.  Between 10 and 30 generally works best)
-        self.cloudScoreThresh = 10;
+		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])
+		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])
+		self.divideBands = ee.List(['cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])
+		
+		self.feature = 0
+		
+		# 9. Cloud and cloud shadow masking parameters.
+		# If cloudScoreTDOM is chosen
+		# cloudScoreThresh: If using the cloudScoreTDOMShift method-Threshold for cloud 
+		#    masking (lower number masks more clouds.  Between 10 and 30 generally works best)
+		self.cloudScoreThresh = 10;
+		
+		# Percentile of cloud score to pull from time series to represent a minimum for 
+		# the cloud score over time for a given pixel. Reduces commission errors over 
+		# cool bright surfaces. Generally between 5 and 10 works well. 0 generally is a bit noisy	
+		self.cloudScorePctl = 10; 
+		
+		# zScoreThresh: Threshold for cloud shadow masking- lower number masks out 
+		# less. Between -0.8 and -1.2 generally works well
+		self.zScoreThresh = -1.15
 
-        # Percentile of cloud score to pull from time series to represent a minimum for 
-        # the cloud score over time for a given pixel. Reduces commission errors over 
-        # cool bright surfaces. Generally between 5 and 10 works well. 0 generally is a bit noisy
-        self.cloudScorePctl = 10; 
-
-        # zScoreThresh: Threshold for cloud shadow masking- lower number masks out 
-        # less. Between -0.8 and -1.2 generally works well
-        self.zScoreThresh = -1.15
-
-        # shadowSumThresh: Sum of IR bands to include as shadows within TDOM and the 
-        # shadow shift method (lower number masks out less)
-        self.shadowSumThresh = 3000;
-
-        # contractPixels: The radius of the number of pixels to contract (negative buffer) clouds and cloud shadows by. Intended to eliminate smaller cloud 
-        #    patches that are likely errors (1.5 results in a -1 pixel buffer)(0.5 results in a -0 pixel buffer)
-        # (1.5 or 2.5 generally is sufficient)
-        self.contractPixels = 2.5; 
-
-        # dilatePixels: The radius of the number of pixels to dilate (buffer) clouds 
-        # and cloud shadows by. Intended to include edges of clouds/cloud shadows 
-        # that are often missed (1.5 results in a 1 pixel buffer)(0.5 results in a 0 pixel buffer)
-        # (2.5 or 3.5 generally is sufficient)
-        self.dilatePixels = 2.5;
-        
-        self.calcSR = True
-              
-        self.maskSR = True
-        self.cloudMask = True
-        self.hazeMask = True
-        self.shadowMask = True
-        self.terrainCorrection = True
+		# shadowSumThresh: Sum of IR bands to include as shadows within TDOM and the 
+		# shadow shift method (lower number masks out less)
+		self.shadowSumThresh = 3000;
+		
+		# contractPixels: The radius of the number of pixels to contract (negative buffer) clouds and cloud shadows by. Intended to eliminate smaller cloud 
+		#    patches that are likely errors (1.5 results in a -1 pixel buffer)(0.5 results in a -0 pixel buffer)
+		# (1.5 or 2.5 generally is sufficient)
+		self.contractPixels = 2.5; 
+		
+		# dilatePixels: The radius of the number of pixels to dilate (buffer) clouds 
+		# and cloud shadows by. Intended to include edges of clouds/cloud shadows 
+		# that are often missed (1.5 results in a 1 pixel buffer)(0.5 results in a 0 pixel buffer)
+		# (2.5 or 3.5 generally is sufficient)
+		self.dilatePixels = 2.5;
+		
+		self.calcSR = True      
+		self.brdf = True
+		self.QAcloudMask = True
+		self.cloudMask = True
+		self.shadowMask = False
+		self.terrainCorrection = False
 
 
 class functions():       
@@ -204,44 +199,49 @@ class functions():
 	def getSentinel2(self):
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
                                                  .filterBounds(self.env.location) \
-						 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
-#						 .select(self.env.s2BandsIn,self.env.s2BandsOut)
-
+												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+						
 #		s2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
 
-		print(s2sAll.size().getInfo())
-		s2s = self.maskShadows(s2s,s2sAll)
-		#print(s2s.first().bandNames().getInfo())
-		print( "scaling")
-		s2s = s2s.map(self.scaleS2) #select(self.env.s2BandsIn,self.env.s2BandsOut)
-		self.collectionMeta = s2s.getInfo()['features']
-		#print(self.collectionMeta)
-		print( "doing SR")
-		s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
-		print(s2s.first().bandNames().getInfo())
-		print( "applying cloudmask")
-		s2s = s2s.map(self.QAMaskCloud)
-		s2s = s2s.map(self.sentinelCloudScore)
-		print(s2s.first().bandNames().getInfo())
-		print("more clouds")
-		s2s = self.cloudMasking(s2s)
-		print(s2s.first().bandNames().getInfo())
 
+
+		if self.env.shadowMask == True:
+			print("applying shadow mask..")
+			s2s = self.maskShadows(s2s,s2sAll)
+
+		print("scaling bands..")
+		s2s = s2s.map(self.scaleS2) 
+		self.collectionMeta = s2s.getInfo()['features']
 		
-		#s2s = s2s.map(self.addAllTasselCapIndices)
-		#s2s = s2s.map(self.tcbwi)
-		print( "doing terrain")
-		s2s = s2s.map(self.terrain)
-		print(s2s.first().bandNames().getInfo())
+		if self.env.maskSR == True:
+			print("calculate surface reflectance using 6s..")
+			s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
+
+		if self.env.QAcloudMask == True:
+			print("use QA band for cloud Masking")
+			s2s = s2s.map(self.QAMaskCloud)
+			
+		if self.env.cloudMask == True:
+			print("sentinel cloud score...")
+			s2s = s2s.map(self.sentinelCloudScore)
+			s2s = self.cloudMasking(s2s)
+
+		if self.env.brdf == True:
+			print("apply brdf correction..")
+			s2s = s2s.map(self.brdf)
 		
-		#img =s2s.median()
-		print("medoid")
+		if self.env.terrainCorrection == True:
+			print("apply terrain correction..")
+			s2s = s2s.map(self.terrain)
+		
+		print("calculating medoid")
 		img = self.medoidMosaic(s2s)
-		#print(img.getInfo())
-				
+		print("rescaling..")
+		img = self.reScaleS2(img)
+						
 		return img
 		
 
@@ -250,6 +250,14 @@ class functions():
 		t = t.divide(10000)
 		t = t.addBands(img.select(['QA60']));
 		out = t.copyProperties(img).copyProperties(img,['system:time_start']).set("centroid",img.geometry().centroid())
+
+		return out;
+
+	def reScaleS2(self,img):
+		t = ee.Image(img.select(['red','green','blue']));
+		t = t.multiply(10000)
+		#t = t.addBands(img.select(['QA60']));
+		out = t.copyProperties(img).copyProperties(img,['system:time_start']).int16()
 
 		return out;
 
@@ -298,7 +306,7 @@ class functions():
 		score = score.min(blueCirrusScore)
 		
 		score = score.min(rescale(img.select(['red']).add(img.select(['green'])).add(img.select('blue')), [0.2, 0.8]))
-		score = score.min(rescale(img.select(['nir']).add(img.select(['swir1'])).add(img.select('swir2')), [0.3, 0.8]))
+		score = score.min(rescale(img.select(['nir1']).add(img.select(['swir1'])).add(img.select('swir2')), [0.3, 0.8]))
 
 		# clouds are moist
 		ndsi = img.normalizedDifference(['green','swir1'])
@@ -369,7 +377,7 @@ class functions():
 				[0.1084, -0.9022, 0.4120, 0.0573, -0.0251, 0.0238]
 			]);
 		
-			bands=ee.List(['blue','green','red','nir','swir1','swir2'])
+			bands=ee.List(['blue','green','red','nir1','swir1','swir2'])
 			
 			# Make an Array Image, with a 1-D Array per pixel.
 			arrayImage1D = img.select(bands).toArray()
@@ -491,10 +499,10 @@ class functions():
  
 		def topoCorr_SCSc(img):
 			img_plus_ic = img;
-			mask1 = img_plus_ic.select('nir').gt(-0.1);
+			mask1 = img_plus_ic.select('nir1').gt(-0.1);
 			mask2 = img_plus_ic.select('slope').gte(5) \
                             .And(img_plus_ic.select('IC').gte(0)) \
-                            .And(img_plus_ic.select('nir').gt(-0.1));
+                            .And(img_plus_ic.select('nir1').gt(-0.1));
 
 			img_plus_ic_mask2 = ee.Image(img_plus_ic.updateMask(mask2));
 
@@ -508,14 +516,12 @@ class functions():
 				re1 = apply_SCSccorr('re1').select(['re1'])
 				re2 = apply_SCSccorr('re2').select(['re2'])
 				re3 = apply_SCSccorr('re3').select(['re3'])
-				nir = apply_SCSccorr('nir').select(['nir'])
+				nir1 = apply_SCSccorr('nir1').select(['nir1'])
 				nir2 = apply_SCSccorr('nir2').select(['nir2'])
-				#waterVapor = apply_SCSccorr('waterVapor').select(['waterVapor'])
-				#cirrus = apply_SCSccorr('cirrus').select(['cirrus'])
 				swir1 = apply_SCSccorr('swir1').select(['swir1'])
 				swir2 = apply_SCSccorr('swir2').select(['swir2'])
-				#return image.select([]).addBands([blue, green, red]) #,re1,re2,re3, nir,nir2,waterVapor,cirrus, swir1, swir2])
-				return image.select([]).addBands([blue,green,red,re1,re2,re3,nir,nir2,swir1,swir2])
+
+				return image.select([]).addBands([blue,green,red,re1,re2,re3,nir1,nir2,swir1,swir2])
 
 
 			def apply_SCSccorr(band):
@@ -591,10 +597,14 @@ class functions():
 			blue = _correct_band(image, 'blue', kvol, kvol0, f_iso=0.0774, f_geo=0.0079, f_vol=0.0372)
 			green = _correct_band(image, 'green', kvol, kvol0, f_iso=0.1306, f_geo=0.0178, f_vol=0.0580)
 			red = _correct_band(image, 'red', kvol, kvol0, f_iso=0.1690, f_geo=0.0227, f_vol=0.0574)
-			nir = _correct_band(image, 'nir', kvol, kvol0, f_iso=0.3093, f_geo=0.0330, f_vol=0.1535)
+			re1 = _correct_band(image, 're1', kvol, kvol0, f_iso=0.2085, f_geo=0.0256, f_vol=0.0845)
+			re2 = _correct_band(image, 're2', kvol, kvol0, f_iso=0.2316, f_geo=0.0273, f_vol=0.1003)
+			re3 = _correct_band(image, 're3', kvol, kvol0, f_iso=0.2599, f_geo=0.0294, f_vol=0.1197)
+			nir1 = _correct_band(image, 'nir1', kvol, kvol0, f_iso=0.3093, f_geo=0.0330, f_vol=0.1535)
+			nir2 = _correct_band(image, 'nir2', kvol, kvol0, f_iso=0.2907, f_geo=0.0410, f_vol=0.1611)
 			swir1 = _correct_band(image, 'swir1', kvol, kvol0, f_iso=0.3430, f_geo=0.0453, f_vol=0.1154)
 			swir2 = _correct_band(image, 'swir2', kvol, kvol0, f_iso=0.2658, f_geo=0.0387, f_vol=0.0639)
-			return replace_bands(image, [blue, green, red, nir, swir1, swir2])
+			return replace_bands(image, [blue, green, red,re1,re2,re3, nir1,nir2, swir1, swir2])
 
 
 		def _correct_band(image, band_name, kvol, kvol0, f_iso, f_geo, f_vol):
