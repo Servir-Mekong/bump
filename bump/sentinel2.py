@@ -70,8 +70,8 @@ class env(object):
 		
 		self.calcSR = True      
 		self.brdf = True
-		self.QAcloudMask = False
-		self.cloudMask = False
+		self.QAcloudMask = True
+		self.cloudMask = True
 		self.shadowMask = True
 		self.terrainCorrection = True
 
@@ -85,7 +85,7 @@ class functions():
 	
 	def TOAtoSR(self,img):
 		
-		#TDOMMask = img.select(['TDOMMask'])
+		TDOMMask = img.select(['TDOMMask'])
 		info = self.collectionMeta[self.env.feature]['properties']
 		scene_date = datetime.datetime.utcfromtimestamp(info['system:time_start']/1000)# i.e. Python uses seconds, EE uses milliseconds
 		solar_z = info['MEAN_SOLAR_ZENITH_ANGLE']
@@ -196,7 +196,7 @@ class functions():
 			
 		self.env.feature += 1
 		
-		return output #.addBands(TDOMMask)
+		return output.addBands(TDOMMask)
 
 
 	def getSentinel2(self):
@@ -240,15 +240,11 @@ class functions():
 
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 		img = ee.Image(s2s.first())
-#		print(img.geometry().bounds(1).getInfo())
 
 
 		if self.env.brdf == True:
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
-			##print(s2s.first().getInfo())
-			#img = self.brdf(s2s.first())
-				
 	
 	
 		if self.env.terrainCorrection == True:
@@ -269,16 +265,17 @@ class functions():
 	def scaleS2(self,img):
 		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
 		t = t.divide(10000)
-		t = t.addBands(img.select(['QA60']));
+		t = t.addBands(img.select(['QA60','TDOMMask']));
 		out = t.copyProperties(img).copyProperties(img,['system:time_start','system:footprint']).set("centroid",img.geometry().centroid())
 
 		return out;
 
 	def reScaleS2(self,img):
-		t = ee.Image(img.select(['red','green','blue']));
+		t = ee.Image(img.select(divideBands));
 		t = t.multiply(10000)
-		#t = t.addBands(img.select(['QA60']));
-		out = ee.Image(t.copyProperties(img).copyProperties(img,['system:time_start'])).int16()
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));;
+		
+		out = ee.Image(t.copyProperties(img).copyProperties(img,['system:time_start'])).addBands(bands).int16()
 
 		return out;
 
@@ -286,6 +283,10 @@ class functions():
 
 	# Function to mask clouds using the Sentinel-2 QA band.
 	def QAMaskCloud(self,image):
+		
+		bands = img.select(['QA60','TDOMMask']));
+		img = img.select(self.env.divideBands)
+		
 		qa = image.select('QA60').int16();
 		
 		# Bits 10 and 11 are clouds and cirrus, respectively.
@@ -295,8 +296,10 @@ class functions():
 		# Both flags should be set to zero, indicating clear conditions.
 		mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(qa.bitwiseAnd(cirrusBitMask).eq(0));
 		
+		image = img.updateMask(mask).addBands(bands)
+		
 		# Return the masked and scaled data.
-		return image.updateMask(mask);
+		return image;
 
 	def sentinelCloudScore(self,img):
 		"""
@@ -334,25 +337,33 @@ class functions():
 		score=score.min(rescale(ndsi, [0.8, 0.6]))
 		score = score.multiply(100).byte();
 		score = score.clamp(0,100);
-		
-		return img.addBands(score.rename(['cloudScore']))         
+  
+		return img.addBands(score.rename(['cloudScore']))
 	
-	
+			
 	def cloudMasking(self,collection):
 
 		
 		def maskClouds(img):
+			
+			
 			cloudMask = img.select(['cloudScore']).lt(self.env.cloudScoreThresh)\
 											      .focal_min(self.env.dilatePixels) \
 											      .focal_max(self.env.contractPixels) \
 											      .rename(['cloudMask'])    
             
-			return img.updateMask(cloudMask).addBands(cloudMask);
+            bands = img.select(['QA60','TDOMMask','cloudScore']));
+            img = img.select(self.env.divideBands) #.updateMask(cloudMask)
+            
+			return img.addBands(cloudMask).addBands(bands);
 
 		
+		
+		
+		
 		# Find low cloud score pctl for each pixel to avoid comission errors
-		#minCloudScore = collection.select(['cloudScore']).reduce(ee.Reducer.percentile([self.env.cloudScorePctl]));
-
+		minCloudScore = collection.select(['cloudScore']).reduce(ee.Reducer.percentile([self.env.cloudScorePctl]));
+		
 		collection = collection.map(maskClouds)
 		
 		return collection
@@ -381,7 +392,7 @@ class functions():
 		# Mask out dark dark outliers
 		collection_tdom = collection.map(TDOM)
 
-		return collection_tdom.map(mask)
+		return collection_tdom #.map(mask)
 
 	def addAllTasselCapIndices(self,img): 
 		""" Function to get all tasselCap indices """
@@ -519,6 +530,8 @@ class functions():
 			return ee.Image(img_plus_ic);
  
 		def topoCorr_SCSc(img):
+			
+			bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
 			img_plus_ic = img;
 			mask1 = img_plus_ic.select('nir1').gt(-0.1);
 			mask2 = img_plus_ic.select('slope').gte(5) \
@@ -576,7 +589,7 @@ class functions():
 			
 			img_SCSccorr = img_SCSccorr.unmask(img_plus_ic.select(bandList_IC)).select(bandList);
   			
-			return img_SCSccorr.unmask(img_plus_ic.select(bandList)) 
+			return img_SCSccorr.unmask(img_plus_ic.select(bandList)).addBands(bands) 
 	
 		
 		
@@ -588,7 +601,8 @@ class functions():
 
 	def medoidMosaic(self,collection):
 		""" medoid composite with equal weight among indices """
-                    
+
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
 		collection = collection.select(self.env.exportBands)
 
 		bandNames = self.env.exportBands;
@@ -605,7 +619,7 @@ class functions():
   
 		medoid = ee.ImageCollection(medoid).reduce(ee.Reducer.min(bandNames.length().add(1))).select(bandNumbers,bandNames);
   
-		return medoid;
+		return medoid.addBands(bands);
 
  
 	def brdf(self,img):   
@@ -682,15 +696,17 @@ class functions():
 		(sunAz, sunZen) = sun_angles.create(date, footprint)
 		(viewAz, viewZen) = view_angles.create(footprint)
 		(kvol, kvol0) = _kvol(sunAz, sunZen, viewAz, viewZen)
+		
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
 		img = ee.Image(_apply(img, kvol.multiply(PI()), kvol0.multiply(PI())))
-		return img
+		return img.addBands(bands)
 
 
 
      		
 if __name__ == "__main__":        
 	
-	img = functions().getSentinel2().select(["red","green","blue"]) #,"cloudScore","cloudMask","TDOMMask"]).multiply(10000)
+	img = functions().getSentinel2() #.select(["red","green","blue"]) #,"cloudScore","cloudMask","TDOMMask"]).multiply(10000)
 	#img = functions().getSentinel2().select(["TDOMMask"])	
 	print(img.bandNames().getInfo())	
 	
