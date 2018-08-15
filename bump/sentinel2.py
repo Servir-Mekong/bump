@@ -5,8 +5,11 @@ from Py6S import *
 import math
 import datetime
 import os, sys
+from utils import *
 sys.path.append("/gee-atmcorr-S2/bin/")
 from atmospheric import Atmospheric
+import sun_angles
+import view_angles
 
  
 #import ee.mapclient
@@ -14,11 +17,11 @@ from atmospheric import Atmospheric
 class env(object):
 
 	def __init__(self):
-        """Initialize the environment."""   
-         
+		"""Initialize the environment."""
+
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-01-13"
+		self.startDate = "2016-01-15"
 		self.endDate = "2016-01-26"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
@@ -67,10 +70,10 @@ class env(object):
 		
 		self.calcSR = True      
 		self.brdf = True
-		self.QAcloudMask = True
-		self.cloudMask = True
-		self.shadowMask = False
-		self.terrainCorrection = False
+		self.QAcloudMask = False
+		self.cloudMask = False
+		self.shadowMask = True
+		self.terrainCorrection = True
 
 
 class functions():       
@@ -197,51 +200,69 @@ class functions():
 
 
 	def getSentinel2(self):
+	
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
-                                                 .filterBounds(self.env.location) \
-												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+	                                                 .filterBounds(self.env.location) \
+							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 						
-#		s2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
+#		2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
 
-
+		print("got" + str(s2s.size().getInfo()) + " images")
 
 		if self.env.shadowMask == True:
 			print("applying shadow mask..")
 			s2s = self.maskShadows(s2s,s2sAll)
 
 		print("scaling bands..")
-		s2s = s2s.map(self.scaleS2) 
+		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
+ 
 		self.collectionMeta = s2s.getInfo()['features']
 		
-		if self.env.maskSR == True:
+		if self.env.calcSR == True:
 			print("calculate surface reflectance using 6s..")
 			s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
+		print(ee.Image(s2s.first()).bandNames().getInfo())
+
 
 		if self.env.QAcloudMask == True:
 			print("use QA band for cloud Masking")
 			s2s = s2s.map(self.QAMaskCloud)
+
+		print(ee.Image(s2s.first()).bandNames().getInfo())
 			
 		if self.env.cloudMask == True:
 			print("sentinel cloud score...")
 			s2s = s2s.map(self.sentinelCloudScore)
 			s2s = self.cloudMasking(s2s)
 
+		print(ee.Image(s2s.first()).bandNames().getInfo())
+		img = ee.Image(s2s.first())
+#		print(img.geometry().bounds(1).getInfo())
+
+
 		if self.env.brdf == True:
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
-		
+			##print(s2s.first().getInfo())
+			#img = self.brdf(s2s.first())
+				
+	
+	
 		if self.env.terrainCorrection == True:
 			print("apply terrain correction..")
 			s2s = s2s.map(self.terrain)
 		
+		print(ee.Image(s2s.first()).bandNames().getInfo())	
 		print("calculating medoid")
 		img = self.medoidMosaic(s2s)
+		
+		print(img.bandNames().getInfo())
 		print("rescaling..")
 		img = self.reScaleS2(img)
-						
+		
 		return img
 		
 
@@ -249,7 +270,7 @@ class functions():
 		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
 		t = t.divide(10000)
 		t = t.addBands(img.select(['QA60']));
-		out = t.copyProperties(img).copyProperties(img,['system:time_start']).set("centroid",img.geometry().centroid())
+		out = t.copyProperties(img).copyProperties(img,['system:time_start','system:footprint']).set("centroid",img.geometry().centroid())
 
 		return out;
 
@@ -257,7 +278,7 @@ class functions():
 		t = ee.Image(img.select(['red','green','blue']));
 		t = t.multiply(10000)
 		#t = t.addBands(img.select(['QA60']));
-		out = t.copyProperties(img).copyProperties(img,['system:time_start']).int16()
+		out = ee.Image(t.copyProperties(img).copyProperties(img,['system:time_start'])).int16()
 
 		return out;
 
@@ -589,8 +610,6 @@ class functions():
  
 	def brdf(self,img):   
 		
-		import sun_angles
-		import view_angles
 
 	
 		def _apply(image, kvol, kvol0):
@@ -663,7 +682,8 @@ class functions():
 		(sunAz, sunZen) = sun_angles.create(date, footprint)
 		(viewAz, viewZen) = view_angles.create(footprint)
 		(kvol, kvol0) = _kvol(sunAz, sunZen, viewAz, viewZen)
-		return _apply(img, kvol.multiply(PI()), kvol0.multiply(PI()))
+		img = ee.Image(_apply(img, kvol.multiply(PI()), kvol0.multiply(PI())))
+		return img
 
 
 

@@ -96,16 +96,6 @@ def dd2meters(inPt,scale=0.1):
     # return list of converted resolution values
     return [y_meters,x_meters]
 
-def test():
-    # main level program for testing
-    inPt = [-1,0] # -1 degrees latitude, 0 degrees longitue
-    outMeters = meters2dd(inPt,100)
-    outDD = dd2meters(inPt,1)
-
-    # print results
-    print 'Output decimal degrees: {0}\nOutput meters: {1}'.format(outMeters,outDD)
-
-    return
 
 
 # gee helpers
