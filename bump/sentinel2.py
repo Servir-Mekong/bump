@@ -21,20 +21,22 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-01-15"
-		self.endDate = "2016-01-26"
+		self.startDate = "2016-03-01"
+		self.endDate = "2016-04-25"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
-		
+		#self.location = ee.Geometry.Polygon([[-79.19841,-1.95201],[-78.18080,-1.952018],[-78.168442,-1.471582],[-79.10913,-1.47295],[-79.19841,-1.9520182]])	
+
+	
 		self.metadataCloudCoverMax = 80
 		self.cloudThreshold = 10
 		self.hazeThresh = 200
-		self.exportBands = ee.List(['blue','green','red'])
+		self.exportBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'])
         
-		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])
-		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])
-		self.divideBands = ee.List(['cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])
+		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
+		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2','TDOMMask'])
+		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2'])
 		
 		self.feature = 0
 		
@@ -42,25 +44,25 @@ class env(object):
 		# If cloudScoreTDOM is chosen
 		# cloudScoreThresh: If using the cloudScoreTDOMShift method-Threshold for cloud 
 		#    masking (lower number masks more clouds.  Between 10 and 30 generally works best)
-		self.cloudScoreThresh = 10;
+		self.cloudScoreThresh = 20;
 		
 		# Percentile of cloud score to pull from time series to represent a minimum for 
 		# the cloud score over time for a given pixel. Reduces commission errors over 
 		# cool bright surfaces. Generally between 5 and 10 works well. 0 generally is a bit noisy	
-		self.cloudScorePctl = 10; 
+		self.cloudScorePctl = 5; 
 		
 		# zScoreThresh: Threshold for cloud shadow masking- lower number masks out 
 		# less. Between -0.8 and -1.2 generally works well
-		self.zScoreThresh = -1.15
+		self.zScoreThresh = -1
 
 		# shadowSumThresh: Sum of IR bands to include as shadows within TDOM and the 
 		# shadow shift method (lower number masks out less)
-		self.shadowSumThresh = 3000;
+		self.shadowSumThresh = 3500;
 		
 		# contractPixels: The radius of the number of pixels to contract (negative buffer) clouds and cloud shadows by. Intended to eliminate smaller cloud 
 		#    patches that are likely errors (1.5 results in a -1 pixel buffer)(0.5 results in a -0 pixel buffer)
 		# (1.5 or 2.5 generally is sufficient)
-		self.contractPixels = 2.5; 
+		self.contractPixels = 1.5; 
 		
 		# dilatePixels: The radius of the number of pixels to dilate (buffer) clouds 
 		# and cloud shadows by. Intended to include edges of clouds/cloud shadows 
@@ -69,7 +71,7 @@ class env(object):
 		self.dilatePixels = 2.5;
 		
 		self.calcSR = True      
-		self.brdf = True
+		self.brdf = False
 		self.QAcloudMask = True
 		self.cloudMask = True
 		self.shadowMask = True
@@ -205,7 +207,6 @@ class functions():
 	                                                 .filterBounds(self.env.location) \
 							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 						
-#		2s = ee.ImageCollection([ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT"),ee.Image("COPERNICUS/S2/20170606T153621_20170606T154217_T17MRT")])		
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
@@ -216,9 +217,13 @@ class functions():
 			print("applying shadow mask..")
 			s2s = self.maskShadows(s2s,s2sAll)
 
+		print(ee.Image(s2s.first()).bandNames().getInfo())
+
 		print("scaling bands..")
 		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
  
+		print(ee.Image(s2s.first()).bandNames().getInfo())
+
 		self.collectionMeta = s2s.getInfo()['features']
 		
 		if self.env.calcSR == True:
@@ -245,7 +250,8 @@ class functions():
 		if self.env.brdf == True:
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
-	
+
+		print(ee.Image(s2s.first()).bandNames().getInfo())	
 	
 		if self.env.terrainCorrection == True:
 			print("apply terrain correction..")
@@ -271,9 +277,9 @@ class functions():
 		return out;
 
 	def reScaleS2(self,img):
-		t = ee.Image(img.select(divideBands));
+		t = ee.Image(img.select(self.env.exportBands));
 		t = t.multiply(10000)
-		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));;
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
 		
 		out = ee.Image(t.copyProperties(img).copyProperties(img,['system:time_start'])).addBands(bands).int16()
 
@@ -284,8 +290,8 @@ class functions():
 	# Function to mask clouds using the Sentinel-2 QA band.
 	def QAMaskCloud(self,image):
 		
-		bands = img.select(['QA60','TDOMMask']));
-		img = img.select(self.env.divideBands)
+		bands = image.select(['QA60','TDOMMask']);
+		img = image.select(self.env.divideBands)
 		
 		qa = image.select('QA60').int16();
 		
@@ -296,10 +302,10 @@ class functions():
 		# Both flags should be set to zero, indicating clear conditions.
 		mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(qa.bitwiseAnd(cirrusBitMask).eq(0));
 		
-		image = img.updateMask(mask).addBands(bands)
+		image = img #.updateMask(mask).addBands(bands)
 		
 		# Return the masked and scaled data.
-		return image;
+		return image.addBands(bands);
 
 	def sentinelCloudScore(self,img):
 		"""
@@ -346,14 +352,13 @@ class functions():
 		
 		def maskClouds(img):
 			
-			
 			cloudMask = img.select(['cloudScore']).lt(self.env.cloudScoreThresh)\
-											      .focal_min(self.env.dilatePixels) \
-											      .focal_max(self.env.contractPixels) \
-											      .rename(['cloudMask'])    
+				                              .focal_min(self.env.dilatePixels) \
+							      .focal_max(self.env.contractPixels) \
+							      .rename(['cloudMask'])    
             
-            bands = img.select(['QA60','TDOMMask','cloudScore']));
-            img = img.select(self.env.divideBands) #.updateMask(cloudMask)
+			bands = img.select(['QA60','TDOMMask','cloudScore']);
+			img = img.select(self.env.divideBands) #.updateMask(cloudMask)
             
 			return img.addBands(cloudMask).addBands(bands);
 
@@ -531,9 +536,11 @@ class functions():
  
 		def topoCorr_SCSc(img):
 			
-			bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
+			bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
+			
 			img_plus_ic = img;
 			mask1 = img_plus_ic.select('nir1').gt(-0.1);
+			
 			mask2 = img_plus_ic.select('slope').gte(5) \
                             .And(img_plus_ic.select('IC').gte(0)) \
                             .And(img_plus_ic.select('nir1').gt(-0.1));
@@ -543,7 +550,6 @@ class functions():
 			bandList = self.env.exportBands   			
  
 			def applyBands(image):
-				#cb = apply_SCSccorr('cb').select(['cb'])
 				blue = apply_SCSccorr('blue').select(['blue'])
 				green = apply_SCSccorr('green').select(['green'])
 				red = apply_SCSccorr('red').select(['red'])
@@ -566,19 +572,19 @@ class functions():
 											scale= 100, \
 											maxPixels = 1e13); 
 
-				#out_a = ee.Number(out.get('scale'));
-				#out_b = ee.Number(out.get('offset'));
+				out_a = ee.Number(out.get('scale'));
+				out_b = ee.Number(out.get('offset'));
 				
-				#out_c = ee.Number(out.get('offset')).divide(ee.Number(out.get('scale')));
-				out_c = 1	
+				out_c = ee.Number(out_a).divide(out_b);
+				#out_c = 1	
 				
 				# apply the SCSc correction
 				SCSc_output = img_plus_ic_mask2.expression("((image * (cosB * cosZ + cvalue)) / (ic + cvalue))", {
-															'image': img_plus_ic_mask2.select([band]),
-															'ic': img_plus_ic_mask2.select('IC'),
-															'cosB': img_plus_ic_mask2.select('cosS'),
-															'cosZ': img_plus_ic_mask2.select('cosZ'),
-															'cvalue': out_c });
+										'image': img_plus_ic_mask2.select([band]),
+										'ic': img_plus_ic_mask2.select('IC'),
+										'cosB': img_plus_ic_mask2.select('cosS'),
+										'cosZ': img_plus_ic_mask2.select('cosZ'),
+										'cvalue': out_c });
       
 				return ee.Image(SCSc_output);
 																  
@@ -602,13 +608,12 @@ class functions():
 	def medoidMosaic(self,collection):
 		""" medoid composite with equal weight among indices """
 
-		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
+		bands = collection.select(['QA60','TDOMMask','cloudScore','cloudMask']).reduce(ee.Reducer.mean()).rename(['QA60', 'TDOMMask', 'cloudScore', 'cloudMask']);
 		collection = collection.select(self.env.exportBands)
 
 		bandNames = self.env.exportBands;
 		bandNumbers = ee.List.sequence(1,bandNames.length());
-        
-		# calculate medion
+
 		median = ee.ImageCollection(collection).median()
         
 		def subtractmedian(img):
@@ -697,7 +702,7 @@ class functions():
 		(viewAz, viewZen) = view_angles.create(footprint)
 		(kvol, kvol0) = _kvol(sunAz, sunZen, viewAz, viewZen)
 		
-		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']));
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
 		img = ee.Image(_apply(img, kvol.multiply(PI()), kvol0.multiply(PI())))
 		return img.addBands(bands)
 
@@ -721,7 +726,7 @@ if __name__ == "__main__":
 								  assetId="users/servirmekong/temp/077ters209"+t ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
-								  scale=20)
+								  scale=10)
 	
 	
 	task_ordered.start() 
