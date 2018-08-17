@@ -21,21 +21,23 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-03-01"
-		self.endDate = "2016-04-25"
+		self.startDate = "2016-03-15"
+		self.endDate = "2016-03-31"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
 		#self.location = ee.Geometry.Polygon([[-79.19841,-1.95201],[-78.18080,-1.952018],[-78.168442,-1.471582],[-79.10913,-1.47295],[-79.19841,-1.9520182]])	
-
+		
+		#self.location =  ee.FeatureCollection("users/servirmekong/countries/ECU_adm0") #.geometry().buffer(1000)
+		self.dem = ee.Image("USGS/SRTMGL1_003")
 	
-		self.metadataCloudCoverMax = 80
+		self.metadataCloudCoverMax = 40
 		self.cloudThreshold = 10
 		self.hazeThresh = 200
 		self.exportBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'])
         
-		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
-		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2','TDOMMask'])
+		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])#,'TDOMMask'])
+		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])#,'TDOMMask'])
 		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2'])
 		
 		self.feature = 0
@@ -206,18 +208,21 @@ class functions():
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
 	                                                 .filterBounds(self.env.location) \
 							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+							 .map(self.calcArea)
+		
+		s2s = s2s.filter(ee.Filter.gt('area',200000000))
 						
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
 
 		print("got" + str(s2s.size().getInfo()) + " images")
-
+		"""
 		if self.env.shadowMask == True:
 			print("applying shadow mask..")
 			s2s = self.maskShadows(s2s,s2sAll)
 
-		print(ee.Image(s2s.first()).bandNames().getInfo())
+		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
 		print("scaling bands..")
 		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
@@ -230,6 +235,7 @@ class functions():
 			print("calculate surface reflectance using 6s..")
 			s2s = s2s.map(self.TOAtoSR).select(self.env.s2BandsIn,self.env.s2BandsOut)	
 		print(ee.Image(s2s.first()).bandNames().getInfo())
+		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
 
 		if self.env.QAcloudMask == True:
@@ -237,7 +243,10 @@ class functions():
 			s2s = s2s.map(self.QAMaskCloud)
 
 		print(ee.Image(s2s.first()).bandNames().getInfo())
-			
+		
+		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
+
+	
 		if self.env.cloudMask == True:
 			print("sentinel cloud score...")
 			s2s = s2s.map(self.sentinelCloudScore)
@@ -246,6 +255,7 @@ class functions():
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 		img = ee.Image(s2s.first())
 
+		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
 		if self.env.brdf == True:
 			print("apply brdf correction..")
@@ -257,14 +267,18 @@ class functions():
 			print("apply terrain correction..")
 			s2s = s2s.map(self.terrain)
 		
+		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
+
 		print(ee.Image(s2s.first()).bandNames().getInfo())	
 		print("calculating medoid")
 		img = self.medoidMosaic(s2s)
 		
-		print(img.bandNames().getInfo())
+		#print(img.bandNames().getInfo())
 		print("rescaling..")
 		img = self.reScaleS2(img)
-		
+		"""
+		img = ee.Image("COPERNICUS/S2/20160328T163019_20160328T225637_T15MYU").select(self.env.s2BandsIn,self.env.s2BandsOut)
+		img= self.terrain(img)
 		return img
 		
 
@@ -272,8 +286,8 @@ class functions():
 		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
 		t = t.divide(10000)
 		t = t.addBands(img.select(['QA60','TDOMMask']));
-		out = t.copyProperties(img).copyProperties(img,['system:time_start','system:footprint']).set("centroid",img.geometry().centroid())
-
+		out = t.copyProperties(img).copyProperties(img,['system:time_start','system:footprint','MEAN_SOLAR_ZENITH_ANGLE','MEAN_SOLAR_AZIMUTH_ANGLE']).set("centroid",img.geometry().centroid())
+		out = ee.Image(out).clip(self.env.location)
 		return out;
 
 	def reScaleS2(self,img):
@@ -285,6 +299,10 @@ class functions():
 
 		return out;
 
+
+	def calcArea(self,image):
+		area = ee.Geometry(image.geometry()).area()
+		return image.set('area',area)
 		
 
 	# Function to mask clouds using the Sentinel-2 QA band.
@@ -358,7 +376,7 @@ class functions():
 							      .rename(['cloudMask'])    
             
 			bands = img.select(['QA60','TDOMMask','cloudScore']);
-			img = img.select(self.env.divideBands) #.updateMask(cloudMask)
+			img = img.select(self.env.divideBands)#.updateMask(cloudMask)
             
 			return img.addBands(cloudMask).addBands(bands);
 
@@ -469,10 +487,10 @@ class functions():
 
 	def terrain(self,img):
 		degree2radian = 0.01745;
- 
+		img = img.updateMask(img.mask().reduce(ee.Reducer.min()))
+		dem = self.env.dem.unmask(0)
 		def topoCorr_IC(img):
 			
-			dem = ee.Image("USGS/SRTMGL1_003").unmask(0)
 						
 			# Extract image metadata about solar position
 			SZ_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_ZENITH_ANGLE'))).multiply(3.14159265359).divide(180).clip(img.geometry().buffer(10000)); 
@@ -548,7 +566,7 @@ class functions():
 			img_plus_ic_mask2 = ee.Image(img_plus_ic.updateMask(mask2));
 
 			bandList = self.env.exportBands   			
- 
+			bandList = ['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'] 
 			def applyBands(image):
 				blue = apply_SCSccorr('blue').select(['blue'])
 				green = apply_SCSccorr('green').select(['green'])
@@ -569,13 +587,14 @@ class functions():
 		
 				out = img_plus_ic_mask2.select('IC', band).reduceRegion(reducer= ee.Reducer.linearFit(), \
 											geometry= ee.Geometry(img.geometry().buffer(-5000)), \
-											scale= 100, \
-											maxPixels = 1e13); 
+											scale= 300 ,\
+											maxPixels=300000)
 
 				out_a = ee.Number(out.get('scale'));
 				out_b = ee.Number(out.get('offset'));
 				
 				out_c = ee.Number(out_a).divide(out_b);
+				
 				#out_c = 1	
 				
 				# apply the SCSc correction
@@ -588,9 +607,9 @@ class functions():
       
 				return ee.Image(SCSc_output);
 																  
-			#img_SCSccorr = ee.Image([apply_SCSccorr(band) for band in bandList]).addBands(img_plus_ic.select('IC'));
-			img_SCSccorr = applyBands(img).select(bandList).addBands(img_plus_ic.select('IC'))
-		
+			img_SCSccorr = ee.Image([apply_SCSccorr(band) for band in bandList]).addBands(img_plus_ic.select('IC'));
+			#img_SCSccorr = applyBands(img).select(bandList).addBands(img_plus_ic.select('IC'))
+			img_SCSccorr  = ee.Image(1).divide(img_SCSccorr)		
 			bandList_IC = ee.List([bandList, 'IC']).flatten();
 			
 			img_SCSccorr = img_SCSccorr.unmask(img_plus_ic.select(bandList_IC)).select(bandList);
@@ -713,7 +732,7 @@ if __name__ == "__main__":
 	
 	img = functions().getSentinel2() #.select(["red","green","blue"]) #,"cloudScore","cloudMask","TDOMMask"]).multiply(10000)
 	#img = functions().getSentinel2().select(["TDOMMask"])	
-	print(img.bandNames().getInfo())	
+	#print(img.bandNames().getInfo())	
 	
 	geom = ee.Image(img).geometry().getInfo()
 	countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw');
