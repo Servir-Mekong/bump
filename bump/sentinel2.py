@@ -6,8 +6,8 @@ import math
 import datetime
 import os, sys
 from utils import *
-sys.path.append("/gee-atmcorr-S2/bin/")
-from atmospheric import Atmospheric
+#sys.path.append("/gee-atmcorr-S2/bin/")
+#from atmospheric import Atmospheric
 import sun_angles
 import view_angles
 
@@ -21,24 +21,24 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-03-15"
-		self.endDate = "2016-03-31"
+		self.startDate = "2016-04-15"
+		self.endDate = "2016-04-30"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
 		#self.location = ee.Geometry.Polygon([[-79.19841,-1.95201],[-78.18080,-1.952018],[-78.168442,-1.471582],[-79.10913,-1.47295],[-79.19841,-1.9520182]])	
 		
-		#self.location =  ee.FeatureCollection("users/servirmekong/countries/ECU_adm0") #.geometry().buffer(1000)
+		self.ecuador =  ee.FeatureCollection("users/servirmekong/countries/ECU_adm0") #.geometry() #.buffer(1000)
 		self.dem = ee.Image("USGS/SRTMGL1_003")
 	
-		self.metadataCloudCoverMax = 40
+		self.metadataCloudCoverMax = 60
 		self.cloudThreshold = 10
 		self.hazeThresh = 200
-		self.exportBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'])
+		self.exportBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2','cb','waterVapor','cirrus'])
         
 		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
 		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2','TDOMMask'])
-		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2'])
+		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2','waterVapor'])
 		
 		self.feature = 0
 		
@@ -72,13 +72,12 @@ class env(object):
 		# (2.5 or 3.5 generally is sufficient)
 		self.dilatePixels = 2.5;
 		
-		self.calcSR = True      
-		self.brdf = False
+		self.calcSR = False     
+		self.brdf = True
 		self.QAcloudMask = True
 		self.cloudMask = True
 		self.shadowMask = True
 		self.terrainCorrection = True
-
 
 class functions():       
 	def __init__(self):
@@ -194,7 +193,7 @@ class functions():
 			return ref
 		
 		# all wavebands
-		output = img.select('QA60')
+		output = img.select('QA60','cb','waterVapor','cirrus')
 		for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
 			output = output.addBands(surface_reflectance(band))
 			
@@ -221,10 +220,10 @@ class functions():
 			print("applying shadow mask..")
 			s2s = self.maskShadows(s2s,s2sAll)
 
-		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
+		print(ee.Image(s2s.first()).bandNames().getInfo())
 
 		print("scaling bands..")
-		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
+		s2s = s2s.map(self.scaleS2).select(self.env.s2BandsIn,self.env.s2BandsOut)
  
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
@@ -240,7 +239,7 @@ class functions():
 		if self.env.QAcloudMask == True:
 			print("use QA band for cloud Masking")
 			s2s = s2s.map(self.QAMaskCloud)
-
+		print(ee.Image(s2s.first()).bandNames().getInfo())
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 		
 		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
@@ -251,26 +250,20 @@ class functions():
 			s2s = s2s.map(self.sentinelCloudScore)
 			s2s = self.cloudMasking(s2s)
 
-		print(ee.Image(s2s.first()).bandNames().getInfo())
-		img = ee.Image(s2s.first())
-
-		print(s2s.aggregate_histogram("pixels").getInfo())
-		print(s2s.aggregate_histogram("area").getInfo())
-		
-		s2s = s2s.map(self.checkData).filter(ee.Filter.gt("pixels",15000))
-		print(s2s.size().getInfo())
-		print("------------------")
-		print(s2s.first().get("pixels").getInfo())
-		print(s2s.aggregate_histogram("pixels").getInfo())
 		if self.env.brdf == True:
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
 
-		print(ee.Image(s2s.first()).bandNames().getInfo())	
+
 	
 		if self.env.terrainCorrection == True:
 			print("apply terrain correction..")
-			s2s = s2s.map(self.terrain)
+			s2s = s2s.map(self.getTopo)
+			
+			corrected = s2s.filter(ee.Filter.gt("slope",10))
+			notCorrected = s2s.filter(ee.Filter.lt("slope",10))
+			
+			s2s = corrected.map(self.terrain).merge(notCorrected)
 		
 		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
@@ -280,30 +273,25 @@ class functions():
 		
 		#print(img.bandNames().getInfo())
 		print("rescaling..")
-		img = self.reScaleS2(img)
+		img = self.reScaleS2(img).clip(self.env.ecuador)
 		
 		return img
 		
 
-	def checkData(self,img):
-		values =  img.select("red").gt(0).reduceRegion(reducer= ee.Reducer.sum(),\
-      				    	   geometry= ee.Geometry(img.geometry()),\
-					   scale= 100,\
-      					   maxPixels= 1000000000).get("red")
-		return img.set("pixels",values) 
+
 
 	def scaleS2(self,img):
 		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
 		t = t.divide(10000)
 		t = t.addBands(img.select(['QA60','TDOMMask']));
 		out = t.copyProperties(img).copyProperties(img,['system:time_start','system:footprint','MEAN_SOLAR_ZENITH_ANGLE','MEAN_SOLAR_AZIMUTH_ANGLE']).set("centroid",img.geometry().centroid())
-		out = ee.Image(out).clip(self.env.location)
+		out = ee.Image(out)
 		return out;
 
 	def reScaleS2(self,img):
-		t = ee.Image(img.select(self.env.exportBands));
+		t = ee.Image(img.select(ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2','cloudMask','cb','waterVapor','cirrus'])));
 		t = t.multiply(10000)
-		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
+		bands = img.select(['QA60','TDOMMask','cloudScore']);
 		
 		out = ee.Image(t.copyProperties(img).copyProperties(img,['system:time_start'])).addBands(bands).int16()
 
@@ -385,7 +373,7 @@ class functions():
 							      .focal_max(self.env.contractPixels) \
 							      .rename(['cloudMask'])    
             
-			bands = img.select(['QA60','TDOMMask','cloudScore']);
+			bands = img.select(['QA60','TDOMMask','cloudScore','cb','waterVapor','cirrus']);
 			img = img.select(self.env.divideBands).updateMask(cloudMask)
             
 			return img.addBands(cloudMask).addBands(bands);
@@ -495,22 +483,41 @@ class functions():
 		
 		return img.addBands(out).addBands(out);
 
+
+
+	def getTopo(self,img):
+		''' funtion to filter for areas with terrain and areas without'''
+		dem = self.env.dem.unmask(0)
+		geom = ee.Geometry(img.get('system:footprint')).bounds()
+		slp_rad = ee.Terrain.slope(dem).clip(geom);
+		
+		slope = slp_rad.reduceRegion(reducer= ee.Reducer.percentile([80]), \
+									 geometry= geom,\
+									 scale= 100 ,\
+									 maxPixels=10000000)
+		return img.set('slope',slope.get('slope'))
+		
+
 	def terrain(self,img):
 		degree2radian = 0.01745;
 		img = img.updateMask(img.mask().reduce(ee.Reducer.min()))
 		dem = self.env.dem.unmask(0)
+		geom = ee.Geometry(img.get('system:footprint')).bounds().buffer(10000) 
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask','cb','waterVapor','cirrus']);
+		
 		def topoCorr_IC(img):
-			
-						
+		
 			# Extract image metadata about solar position
-			SZ_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_ZENITH_ANGLE'))).multiply(3.14159265359).divide(180).clip(img.geometry().buffer(10000)); 
-			SA_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')).multiply(3.14159265359).divide(180)).clip(img.geometry().buffer(10000)); 
+			SZ_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_ZENITH_ANGLE'))).multiply(degree2radian).clip(geom); 
+			SA_rad = ee.Image.constant(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE'))).multiply(degree2radian).clip(geom); 
+
 			
 			# Creat terrain layers
-			slp = ee.Terrain.slope(dem).clip(img.geometry().buffer(10000));
-			slp_rad = ee.Terrain.slope(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
-			asp_rad = ee.Terrain.aspect(dem).multiply(degree2radian).clip(img.geometry().buffer(10000));
+			slp = ee.Terrain.slope(dem).clip(geom);
+			slp_rad = ee.Terrain.slope(dem).multiply(degree2radian).clip(geom);
+			asp_rad = ee.Terrain.aspect(dem).multiply(degree2radian).clip(geom);
   			
+
 			# Calculate the Illumination Condition (IC)
 			# slope part of the illumination condition
 			cosZ = SZ_rad.cos();
@@ -523,116 +530,68 @@ class functions():
 			sinS = slp_rad.sin();
 			cosAziDiff = (SA_rad.subtract(asp_rad)).cos();
 			aspect_illumination = sinZ.expression("sinZ * sinS * cosAziDiff", \
-                                           {'sinZ': sinZ, \
-                                            'sinS': sinS, \
-                                            'cosAziDiff': cosAziDiff});
-	
+											 {'sinZ': sinZ, \
+                                              'sinS': sinS, \
+                                              'cosAziDiff': cosAziDiff});
+			
 			# full illumination condition (IC)
 			ic = slope_illumination.add(aspect_illumination);
 			
 			# Add IC to original image
 			img_plus_ic = ee.Image(img.addBands(ic.rename(['IC'])).addBands(cosZ.rename(['cosZ'])).addBands(cosS.rename(['cosS'])).addBands(slp.rename(['slope'])));
-			
+		
 			return ee.Image(img_plus_ic);
  
-			# Calculate the Illumination Condition (IC)
-			# slope part of the illumination condition
-			cosZ = SZ_rad.cos();
-			cosS = slp_rad.cos();
-			slope_illumination = cosS.expression("cosZ * cosS", \
-												{'cosZ': cosZ, 'cosS': cosS.select('slope')});
-			
-			
-			# aspect part of the illumination condition
-			sinZ = SZ_rad.sin(); 
-			sinS = slp_rad.sin();
-			cosAziDiff = (SA_rad.subtract(asp_rad)).cos();
-			aspect_illumination = sinZ.expression("sinZ * sinS * cosAziDiff", \
-                                           {'sinZ': sinZ, \
-                                            'sinS': sinS, \
-                                            'cosAziDiff': cosAziDiff});
-			
-			# full illumination condition (IC)
-			ic = slope_illumination.add(aspect_illumination);
-			
 			
 
-			# Add IC to original image
-			img_plus_ic = ee.Image(img.addBands(ic.rename(['IC'])).addBands(cosZ.rename(['cosZ'])).addBands(cosS.rename(['cosS'])).addBands(slp.rename(['slope'])));
+   			
+			bandList = ['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'] 
 			
-			return ee.Image(img_plus_ic);
- 
 		def topoCorr_SCSc(img):
-			
-			bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
-			
 			img_plus_ic = img;
 			mask1 = img_plus_ic.select('nir1').gt(-0.1);
-			
 			mask2 = img_plus_ic.select('slope').gte(5) \
-                            .And(img_plus_ic.select('IC').gte(0)) \
-                            .And(img_plus_ic.select('nir1').gt(-0.1));
+							   .And(img_plus_ic.select('IC').gte(0)) \
+							   .And(img_plus_ic.select('nir1').gt(-0.1));
 
 			img_plus_ic_mask2 = ee.Image(img_plus_ic.updateMask(mask2));
 
-			bandList = self.env.exportBands   			
-			bandList = ['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'] 
-			def applyBands(image):
-				blue = apply_SCSccorr('blue').select(['blue'])
-				green = apply_SCSccorr('green').select(['green'])
-				red = apply_SCSccorr('red').select(['red'])
-				re1 = apply_SCSccorr('re1').select(['re1'])
-				re2 = apply_SCSccorr('re2').select(['re2'])
-				re3 = apply_SCSccorr('re3').select(['re3'])
-				nir1 = apply_SCSccorr('nir1').select(['nir1'])
-				nir2 = apply_SCSccorr('nir2').select(['nir2'])
-				swir1 = apply_SCSccorr('swir1').select(['swir1'])
-				swir2 = apply_SCSccorr('swir2').select(['swir2'])
-
-				return image.select([]).addBands([blue,green,red,re1,re2,re3,nir1,nir2,swir1,swir2])
-
-
+			bandList = ['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2']; # Specify Bands to topographically correct
+		
 			def apply_SCSccorr(band):
 				method = 'SCSc';
-		
+				
 				out = img_plus_ic_mask2.select('IC', band).reduceRegion(reducer= ee.Reducer.linearFit(), \
-											geometry= ee.Geometry(img.geometry().buffer(-5000)), \
-											scale= 300 ,\
-											maxPixels=300000)
+																		geometry= geom, \
+																		scale= 300, \
+																		maxPixels = 1e6); 
 
 				out_a = ee.Number(out.get('scale'));
 				out_b = ee.Number(out.get('offset'));
-				
-				out_c = ee.Number(out_a).divide(out_b);
-				
-				#out_c = 1	
-				
+				out_c = ee.Number(out.get('offset')).divide(ee.Number(out.get('scale')));
+					
 				# apply the SCSc correction
 				SCSc_output = img_plus_ic_mask2.expression("((image * (cosB * cosZ + cvalue)) / (ic + cvalue))", {
-										'image': img_plus_ic_mask2.select([band]),
-										'ic': img_plus_ic_mask2.select('IC'),
-										'cosB': img_plus_ic_mask2.select('cosS'),
-										'cosZ': img_plus_ic_mask2.select('cosZ'),
-										'cvalue': out_c });
-      
+															'image': img_plus_ic_mask2.select([band]),
+															'ic': img_plus_ic_mask2.select('IC'),
+															'cosB': img_plus_ic_mask2.select('cosS'),
+															'cosZ': img_plus_ic_mask2.select('cosZ'),
+															'cvalue': out_c });
+		  
 				return ee.Image(SCSc_output);
-																  
+				
 			img_SCSccorr = ee.Image([apply_SCSccorr(band) for band in bandList]).addBands(img_plus_ic.select('IC'));
-			#img_SCSccorr = applyBands(img).select(bandList).addBands(img_plus_ic.select('IC'))
-			img_SCSccorr  = ee.Image(1).divide(img_SCSccorr)		
 			bandList_IC = ee.List([bandList, 'IC']).flatten();
-			
 			img_SCSccorr = img_SCSccorr.unmask(img_plus_ic.select(bandList_IC)).select(bandList);
-  			
-			return img_SCSccorr.unmask(img_plus_ic.select(bandList)).addBands(bands) 
-	
-		
-		
+				
+			return img_SCSccorr.unmask(img_plus_ic.select(bandList))
+			
+			
 		img = topoCorr_IC(img)
-		img = topoCorr_SCSc(img)
-		
+		img = topoCorr_SCSc(img).addBands(bands)
+			
 		return img
-  	
+
 
 	def medoidMosaic(self,collection):
 		""" medoid composite with equal weight among indices """
@@ -731,7 +690,7 @@ class functions():
 		(viewAz, viewZen) = view_angles.create(footprint)
 		(kvol, kvol0) = _kvol(sunAz, sunZen, viewAz, viewZen)
 		
-		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask']);
+		bands = img.select(['QA60','TDOMMask','cloudScore','cloudMask','cb','waterVapor','cirrus']);
 		img = ee.Image(_apply(img, kvol.multiply(PI()), kvol0.multiply(PI())))
 		return img.addBands(bands)
 
@@ -755,7 +714,8 @@ if __name__ == "__main__":
 								  assetId="users/servirmekong/temp/077ters209"+t ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
-								  scale=10)
+								  crs="EPSG:32717",
+								  scale=100)
 	
 	
 	task_ordered.start() 
