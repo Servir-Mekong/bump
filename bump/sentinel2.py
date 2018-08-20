@@ -36,8 +36,8 @@ class env(object):
 		self.hazeThresh = 200
 		self.exportBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','swir1','swir2'])
         
-		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12'])#,'TDOMMask'])
-		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2'])#,'TDOMMask'])
+		self.s2BandsIn = ee.List(['QA60','B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12','TDOMMask'])
+		self.s2BandsOut = ee.List(['QA60','cb','blue','green','red','re1','re2','re3','nir1','nir2','waterVapor','cirrus','swir1','swir2','TDOMMask'])
 		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2'])
 		
 		self.feature = 0
@@ -217,7 +217,6 @@ class functions():
 #						 .map(self.QAMaskCloud)
 
 		print("got" + str(s2s.size().getInfo()) + " images")
-		"""
 		if self.env.shadowMask == True:
 			print("applying shadow mask..")
 			s2s = self.maskShadows(s2s,s2sAll)
@@ -255,8 +254,14 @@ class functions():
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 		img = ee.Image(s2s.first())
 
-		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
-
+		print(s2s.aggregate_histogram("pixels").getInfo())
+		print(s2s.aggregate_histogram("area").getInfo())
+		
+		s2s = s2s.map(self.checkData).filter(ee.Filter.gt("pixels",15000))
+		print(s2s.size().getInfo())
+		print("------------------")
+		print(s2s.first().get("pixels").getInfo())
+		print(s2s.aggregate_histogram("pixels").getInfo())
 		if self.env.brdf == True:
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
@@ -276,11 +281,16 @@ class functions():
 		#print(img.bandNames().getInfo())
 		print("rescaling..")
 		img = self.reScaleS2(img)
-		"""
-		img = ee.Image("COPERNICUS/S2/20160328T163019_20160328T225637_T15MYU").select(self.env.s2BandsIn,self.env.s2BandsOut)
-		img= self.terrain(img)
+		
 		return img
 		
+
+	def checkData(self,img):
+		values =  img.select("red").gt(0).reduceRegion(reducer= ee.Reducer.sum(),\
+      				    	   geometry= ee.Geometry(img.geometry()),\
+					   scale= 100,\
+      					   maxPixels= 1000000000).get("red")
+		return img.set("pixels",values) 
 
 	def scaleS2(self,img):
 		t = ee.Image(img.select(['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']));
@@ -320,7 +330,7 @@ class functions():
 		# Both flags should be set to zero, indicating clear conditions.
 		mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(qa.bitwiseAnd(cirrusBitMask).eq(0));
 		
-		image = img #.updateMask(mask).addBands(bands)
+		image = img.updateMask(mask).addBands(bands)
 		
 		# Return the masked and scaled data.
 		return image.addBands(bands);
@@ -376,7 +386,7 @@ class functions():
 							      .rename(['cloudMask'])    
             
 			bands = img.select(['QA60','TDOMMask','cloudScore']);
-			img = img.select(self.env.divideBands)#.updateMask(cloudMask)
+			img = img.select(self.env.divideBands).updateMask(cloudMask)
             
 			return img.addBands(cloudMask).addBands(bands);
 
@@ -415,7 +425,7 @@ class functions():
 		# Mask out dark dark outliers
 		collection_tdom = collection.map(TDOM)
 
-		return collection_tdom #.map(mask)
+		return collection_tdom.map(mask)
 
 	def addAllTasselCapIndices(self,img): 
 		""" Function to get all tasselCap indices """
