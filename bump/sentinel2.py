@@ -21,8 +21,8 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-04-15"
-		self.endDate = "2016-04-30"
+		self.startDate = "2016-05-15"
+		self.endDate = "2016-05-30"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
@@ -206,13 +206,13 @@ class functions():
 	
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
 	                                                 .filterBounds(self.env.location) \
-							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+							 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
 							 .map(self.calcArea)
 		
 		s2s = s2s.filter(ee.Filter.gt('area',200000000))
 						
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
-                                                 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax)) \
+                                                 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
 #						 .map(self.QAMaskCloud)
 
 		print("got" + str(s2s.size().getInfo()) + " images")
@@ -254,8 +254,9 @@ class functions():
 			print("apply brdf correction..")
 			s2s = s2s.map(self.brdf)
 
-
+		print(s2s.aggregate_histogram("slope").getInfo())
 	
+		print(s2s.aggregate_histogram("slope").getInfo())
 		if self.env.terrainCorrection == True:
 			print("apply terrain correction..")
 			s2s = s2s.map(self.getTopo)
@@ -264,6 +265,8 @@ class functions():
 			notCorrected = s2s.filter(ee.Filter.lt("slope",10))
 			
 			s2s = corrected.map(self.terrain).merge(notCorrected)
+		
+		
 		
 		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
