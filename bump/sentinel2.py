@@ -6,8 +6,8 @@ import math
 import datetime
 import os, sys
 from utils import *
-#sys.path.append("/gee-atmcorr-S2/bin/")
-#from atmospheric import Atmospheric
+sys.path.append("/gee-atmcorr-S2/bin/")
+from atmospheric import Atmospheric
 import sun_angles
 import view_angles
 
@@ -21,8 +21,8 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-05-15"
-		self.endDate = "2016-05-30"
+		self.startDate = "2016-07-15"
+		self.endDate = "2016-08-30"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
@@ -72,7 +72,7 @@ class env(object):
 		# (2.5 or 3.5 generally is sufficient)
 		self.dilatePixels = 2.5;
 		
-		self.calcSR = False     
+		self.calcSR = True     
 		self.brdf = True
 		self.QAcloudMask = True
 		self.cloudMask = True
@@ -193,7 +193,7 @@ class functions():
 			return ref
 		
 		# all wavebands
-		output = img.select('QA60','cb','waterVapor','cirrus')
+		output = img.select('QA60')
 		for band in ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B10','B11','B12']:
 			output = output.addBands(surface_reflectance(band))
 			
@@ -207,13 +207,15 @@ class functions():
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
 	                                                 .filterBounds(self.env.location) \
 							 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
+							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
 							 .map(self.calcArea)
 		
-		s2s = s2s.filter(ee.Filter.gt('area',200000000))
-						
+		#2s = s2s.filter(ee.Filter.gt('area',100000000))
+						     	
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
-#						 .map(self.QAMaskCloud)
+						 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
+		#				 .map(self.QAMaskCloud)
 
 		print("got" + str(s2s.size().getInfo()) + " images")
 		if self.env.shadowMask == True:
@@ -223,7 +225,7 @@ class functions():
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
 		print("scaling bands..")
-		s2s = s2s.map(self.scaleS2).select(self.env.s2BandsIn,self.env.s2BandsOut)
+		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
  
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
@@ -249,6 +251,9 @@ class functions():
 			print("sentinel cloud score...")
 			s2s = s2s.map(self.sentinelCloudScore)
 			s2s = self.cloudMasking(s2s)
+
+		s2s = s2s.map(self.pixelArea)
+		s2s = s2s.filter(ee.Filter.gt("pixelArea",100))
 
 		if self.env.brdf == True:
 			print("apply brdf correction..")
@@ -280,6 +285,16 @@ class functions():
 		
 		return img
 		
+	def pixelArea(self,img):
+		geom = ee.Geometry(img.get('system:footprint')).bounds()
+
+		area = img.select(['red']).gt(0).reduceRegion(reducer= ee.Reducer.sum(),\
+							     geometry= geom,\
+							     scale= 100,\
+							     maxPixels=10000000)
+		
+		return img.set("pixelArea",area.get("red"))
+
 
 
 
