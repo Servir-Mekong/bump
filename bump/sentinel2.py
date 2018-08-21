@@ -6,8 +6,8 @@ import math
 import datetime
 import os, sys
 from utils import *
-sys.path.append("/gee-atmcorr-S2/bin/")
-from atmospheric import Atmospheric
+#sys.path.append("/gee-atmcorr-S2/bin/")
+#from atmospheric import Atmospheric
 import sun_angles
 import view_angles
 
@@ -21,8 +21,8 @@ class env(object):
 
 		# Initialize the Earth Engine object, using the authentication credentials.
 		ee.Initialize()
-		self.startDate = "2016-07-15"
-		self.endDate = "2016-08-30"
+		self.startDate = "2015-01-01"
+		self.endDate = "2015-01-01"
 		self.location = ee.Geometry.Point([-80.72,-1.34])
 		countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw')
 		self.location  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry();
@@ -41,6 +41,9 @@ class env(object):
 		self.divideBands = ee.List(['blue','green','red','re1','re2','re3','nir1','nir2','cb','cirrus','swir1','swir2','waterVapor'])
 		
 		self.feature = 0
+		
+		self.startDoy = 0
+		self.endDoy = 0
 		
 		# 9. Cloud and cloud shadow masking parameters.
 		# If cloudScoreTDOM is chosen
@@ -72,7 +75,7 @@ class env(object):
 		# (2.5 or 3.5 generally is sufficient)
 		self.dilatePixels = 2.5;
 		
-		self.calcSR = True     
+		self.calcSR = False     
 		self.brdf = True
 		self.QAcloudMask = True
 		self.cloudMask = True
@@ -202,20 +205,30 @@ class functions():
 		return output.addBands(TDOMMask)
 
 
-	def getSentinel2(self):
+	def getSentinel2(self,start,end):
+		
+		print start,end
+		self.env.startDate = ee.Date(self.env.startDate).advance(start,'day')
+		self.env.endDate = ee.Date(self.env.endDate).advance(end,'day')
+		
+		print self.env.startDate.getInfo()
+		print self.env.endDate.getInfo()
+				
+		self.env.startDoy = start
+		self.env.endDoy = end
 	
 		s2s = ee.ImageCollection('COPERNICUS/S2').filterDate(self.env.startDate,self.env.endDate) \
-	                                                 .filterBounds(self.env.location) \
-							 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
-							 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
-							 .map(self.calcArea)
+	                                             .filterBounds(self.env.location) \
+												 .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
+												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
+												 #.map(self.calcArea)
 		
 		#2s = s2s.filter(ee.Filter.gt('area',100000000))
 						     	
 		s2sAll = ee.ImageCollection('COPERNICUS/S2').filterBounds(self.env.location) \
                                                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',self.env.metadataCloudCoverMax)) \
-						 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
-		#				 .map(self.QAMaskCloud)
+												 .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',self.env.metadataCloudCoverMax))\
+												 #.map(self.QAMaskCloud)
 
 		print("got" + str(s2s.size().getInfo()) + " images")
 		if self.env.shadowMask == True:
@@ -225,7 +238,7 @@ class functions():
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
 		print("scaling bands..")
-		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
+		s2s = s2s.map(self.scaleS2).select(self.env.s2BandsIn,self.env.s2BandsOut)
  
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
@@ -276,8 +289,12 @@ class functions():
 		print(ee.Image(s2s.first()).get('MEAN_SOLAR_AZIMUTH_ANGLE').getInfo())
 
 		print(ee.Image(s2s.first()).bandNames().getInfo())	
+		
 		print("calculating medoid")
 		img = self.medoidMosaic(s2s)
+		
+		print("adding metadata")
+		img = self.setMetaData(img)
 		
 		#print(img.bandNames().getInfo())
 		print("rescaling..")
@@ -632,7 +649,29 @@ class functions():
   
 		return medoid.addBands(bands);
 
- 
+
+	def setMetaData(self,img):
+		""" add metadata to image """
+		
+		img = ee.Image(img).set({'system:time_start':self.env.startDate.millis(), \
+								 'startDOY':str(self.env.startDoy), \
+								 'endDOY':str(self.env.endDoy), \
+								 'useCloudScore':str(self.env.cloudMask), \
+								 'useTDOM':str(self.env.shadowMask), \
+								 'useQAmask':str(self.env.QAcloudMask), \
+								 'useCloudProject':str(self.env.cloudMask), \
+								 'terrain':str(self.env.terrainCorrection), \
+								 'surfaceReflectance':str(self.env.calcSR), \
+								 'cloudScoreThresh':str(self.env.cloudScoreThresh), \
+								 'cloudScorePctl':str(self.env.cloudScorePctl), \
+								 'zScoreThresh':str(self.env.zScoreThresh), \
+								 'shadowSumThresh':str(self.env.shadowSumThresh), \
+								 'contractPixels':str(self.env.contractPixels), \
+								 'crs':"EPSG:32717", \
+								 'dilatePixels':str(self.env.dilatePixels)})
+
+		return img
+								 		 
 	def brdf(self,img):   
 		
 
@@ -717,23 +756,32 @@ class functions():
      		
 if __name__ == "__main__":        
 	
-	img = functions().getSentinel2() #.select(["red","green","blue"]) #,"cloudScore","cloudMask","TDOMMask"]).multiply(10000)
-	#img = functions().getSentinel2().select(["TDOMMask"])	
-	#print(img.bandNames().getInfo())	
+		
 	
-	geom = ee.Image(img).geometry().getInfo()
+	ee.Initialize()
 	countries = ee.FeatureCollection('ft:1tdSwUL7MVpOauSgRzqVTOwdfy17KDbw-1d9omPw');
 	geom  = countries.filter(ee.Filter.inList('Country', ['Ecuador'])).geometry().bounds().getInfo();
 
+	# sentinel 2 data from Jun 23, 2015 
+	# start at week 39 day 168
+	
+	week = 40
+	startDay = [168,182,196,210,224,238,252,266,280,294,308,322,336,350,364]
+	endDay = [181,195,209,223,237,251,265,279,293,307,321,335,349,363,12,377]
+	
+	i = 11
+	img = functions().getSentinel2(startDay[i],endDay[i]) 
+	
+	name = "Sentinel2_SR_Biweek_" + str(week+i)
 	import time
 	t= time.strftime("%Y%m%d_%H%M%S")
 	task_ordered= ee.batch.Export.image.toAsset(image=img, 
-								  description="tempwater", 
-								  assetId="users/servirmekong/temp/077ters209"+t ,
+								  description=name, 
+								  assetId="projects/Sacha/S2/S2_Biweekly/" + name ,
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
 								  crs="EPSG:32717",
-								  scale=100)
+								  scale=5000)
 	
 	
 	task_ordered.start() 
