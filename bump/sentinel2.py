@@ -6,8 +6,8 @@ import math
 import datetime
 import os, sys
 from utils import *
-#sys.path.append("/gee-atmcorr-S2/bin/")
-#from atmospheric import Atmospheric
+sys.path.append("/gee-atmcorr-S2/bin/")
+from atmospheric import Atmospheric
 import sun_angles
 import view_angles
 
@@ -75,7 +75,7 @@ class env(object):
 		# (2.5 or 3.5 generally is sufficient)
 		self.dilatePixels = 2.5;
 		
-		self.calcSR = False     
+		self.calcSR = True     
 		self.brdf = True
 		self.QAcloudMask = True
 		self.cloudMask = True
@@ -207,12 +207,9 @@ class functions():
 
 	def getSentinel2(self,start,end):
 		
-		print start,end
 		self.env.startDate = ee.Date(self.env.startDate).advance(start,'day')
 		self.env.endDate = ee.Date(self.env.endDate).advance(end,'day')
 		
-		print self.env.startDate.getInfo()
-		print self.env.endDate.getInfo()
 				
 		self.env.startDoy = start
 		self.env.endDoy = end
@@ -238,7 +235,7 @@ class functions():
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
 		print("scaling bands..")
-		s2s = s2s.map(self.scaleS2).select(self.env.s2BandsIn,self.env.s2BandsOut)
+		s2s = s2s.map(self.scaleS2) #.select(self.env.s2BandsIn,self.env.s2BandsOut)
  
 		print(ee.Image(s2s.first()).bandNames().getInfo())
 
@@ -769,7 +766,7 @@ if __name__ == "__main__":
 	startDay = [168,182,196,210,224,238,252,266,280,294,308,322,336,350,364]
 	endDay = [181,195,209,223,237,251,265,279,293,307,321,335,349,363,12,377]
 	
-	i = 11
+	i = 13
 	img = functions().getSentinel2(startDay[i],endDay[i]) 
 	
 	name = "Sentinel2_SR_Biweek_" + str(week+i)
@@ -781,7 +778,7 @@ if __name__ == "__main__":
 								  region=geom['coordinates'], 
 								  maxPixels=1e13,
 								  crs="EPSG:32717",
-								  scale=5000)
+								  scale=10)
 	
 	
 	task_ordered.start() 
